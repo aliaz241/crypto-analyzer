@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+*.log
+*.db
+*.session
+*.session_string
+.env
+hidden_files/
