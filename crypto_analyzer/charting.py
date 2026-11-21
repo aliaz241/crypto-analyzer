@@ -1,11 +1,11 @@
 """
 charting.py
-رسم تصویر نمودار (PNG) از روی کندل‌ها و گزارش تحلیل: کندل‌استیک، EMA20/50،
-باند بولینگر، خطوط حمایت/مقاومت، حد ضررهای پیشنهادی و زیرنمودار حجم.
+Drawing a chart image (PNG) from the candles and the analysis report: candlesticks, EMA20/50,
+Bollinger Bands, support/resistance lines, suggested stop losses and a volume sub-chart.
 
-- بک‌گراند تیره، برچسب‌ها لاتین (DejaVu) تا بدون مشکل رندر فونت/راست‌به‌چپ خوانا بماند.
-- کندل‌ها دستی با Rectangle و خط رسم می‌شوند (بدون وابستگی به mplfinance).
-- هر لایه‌ای که دیتایش در گزارش نباشد (None) رد می‌شود و تابع کرش نمی‌کند.
+- Dark background, Latin labels (DejaVu) so they stay readable without font/RTL rendering issues.
+- Candles are drawn manually with Rectangles and lines (no dependency on mplfinance).
+- Any layer whose data is not in the report (None) is skipped and the function does not crash.
 """
 
 import os
@@ -40,7 +40,7 @@ _SL_SHORT_COLOR = "#ab47bc"
 
 
 def _fmt_price(value) -> str:
-    """قیمت را با دقت مناسب قالب‌بندی می‌کند (برای کوین‌های ارزان مثل PEPE هم درست است)."""
+    """Formats the price with suitable precision (also correct for cheap coins like PEPE)."""
     if value is None:
         return "—"
     v = float(value)
@@ -55,8 +55,8 @@ def _fmt_price(value) -> str:
 
 def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
     """
-    نمودار آخرین `candles` کندل df را با لایه‌های گزارش رسم و در out_path ذخیره می‌کند.
-    خروجی: همان out_path.
+    Draws the chart of the last `candles` candles of df with the report's layers and saves it to out_path.
+    Output: the same out_path.
     """
     if candles is None:
         candles = getattr(config, "CHART_CANDLES", 120)
@@ -84,7 +84,7 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
             spine.set_color(_GRID)
         a.grid(True, color=_GRID, alpha=0.25, linewidth=0.5)
 
-    # --- کندل‌ها (دستی) ---
+    # --- Candles (manual) ---
     for i in range(n):
         ax.plot([i, i], [lows[i], highs[i]], color=colors[i], linewidth=0.8, zorder=2)
         bottom = min(opens[i], closes[i])
@@ -94,7 +94,7 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
         ax.add_patch(Rectangle((i - 0.35, bottom), 0.7, height,
                                facecolor=colors[i], edgecolor=colors[i], zorder=3))
 
-    # --- EMA20 / EMA50 (روی کل df حساب می‌شود تا warm-up درست باشد، بعد tail) ---
+    # --- EMA20 / EMA50 (computed on the whole df so the warm-up is right, then tail) ---
     try:
         ema20 = trend_ind.ema(df, 20).tail(n).values
         ema50 = trend_ind.ema(df, 50).tail(n).values
@@ -103,7 +103,7 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
     except Exception:
         pass
 
-    # --- باند بولینگر ---
+    # --- Bollinger Bands ---
     try:
         bb = vol_ind.bollinger_bands(df).tail(n)
         ax.plot(x, bb["upper"].values, color=_BB_COLOR, linewidth=0.7, alpha=0.8, zorder=4)
@@ -113,7 +113,7 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
     except Exception:
         pass
 
-    # --- حمایت / مقاومت (حداکثر ۳ تا از هر طرف، نزدیک‌ترین‌ها) ---
+    # --- Support / resistance (at most 3 on each side, the nearest ones) ---
     sr = (report or {}).get("support_resistance") or {}
     for r in (sr.get("resistance") or [])[:3]:
         lvl = r.get("level")
@@ -130,7 +130,7 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
         ax.text(n - 0.5, lvl, f" S {_fmt_price(lvl)}", color=_SUPPORT_COLOR,
                 fontsize=8, va="top", ha="right")
 
-    # --- حد ضررهای پیشنهادی (خط‌چین + برچسب) ---
+    # --- Suggested stop losses (dashed line + label) ---
     for key, color, label in (("stop_loss_long", _SL_LONG_COLOR, "SL Long"),
                               ("stop_loss_short", _SL_SHORT_COLOR, "SL Short")):
         rec = ((report or {}).get(key) or {}).get("recommended") or {}
@@ -141,11 +141,11 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
         ax.text(0.5, sl, f" {label} {_fmt_price(sl)}", color=color,
                 fontsize=8, va="bottom", ha="left")
 
-    # --- حجم ---
+    # --- Volume ---
     axv.bar(x, volumes, color=colors, width=0.7)
     axv.set_ylabel("Volume", color=_TEXT, fontsize=9)
 
-    # --- عنوان و محورها ---
+    # --- Title and axes ---
     ind = (report or {}).get("indicators") or {}
     price = ind.get("price") if ind.get("price") is not None else closes[-1]
     symbol = str((report or {}).get("symbol", "")).upper()
@@ -162,9 +162,9 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
     axv.set_xticks(tick_idx)
     axv.set_xticklabels([str(data.index[i])[:10] for i in tick_idx], color=_TEXT)
 
-    # --- فلش جهت احتمالی + سطح هدف بعدی (از همان امتیازدهی اسکنر) ---
-    # جهت را از روند/مومنتوم می‌خوانیم، سطح بعدی را از حمایت/مقاومتِ روبه‌رو.
-    # این «احتمال» یک سوگیری مکانیکی است، نه پیش‌بینی؛ برچسب روی تصویر همین را می‌گوید.
+    # --- Probable-direction arrow + next target level (from the same scanner scoring) ---
+    # We read the direction from trend/momentum, the next level from the facing support/resistance.
+    # This "probability" is a mechanical bias, not a prediction; the label on the image says the same.
     try:
         cand = _scanner.score_candidate(df, report, symbol, timeframe)
         direction = cand.get("direction")
@@ -189,9 +189,9 @@ def render_chart(df, report: dict, out_path: str, candles: int = None) -> str:
     except Exception:
         pass
 
-    # بازه‌ی عمودی را به محدوده‌ی قیمتِ کندل‌های نمایشی (با حاشیه) محدود می‌کنیم تا
-    # وقتی سطوح/حدضرر دوردست در گزارش هست، خود کندل‌ها له نشوند؛ خطوط بیرون از
-    # این بازه بریده می‌شوند ولی برچسبشان لبه‌ی نمودار دیده می‌شود.
+    # We limit the vertical range to the price range of the displayed candles (with margin) so that
+    # when distant levels/stop losses are in the report, the candles themselves are not crushed; lines outside
+    # this range are clipped but their labels are visible at the chart edge.
     pad = (highs.max() - lows.min()) * 0.10 or 1.0
     ax.set_ylim(lows.min() - pad, highs.max() + pad)
     ax.set_xlim(-1, n + n * 0.30)

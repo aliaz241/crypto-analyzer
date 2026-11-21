@@ -1,11 +1,11 @@
 """
 data/coingecko_client.py
-کلاینت گرفتن داده‌ی قیمت/کندل از CoinGecko.
+Client for fetching price/candle data from CoinGecko.
 
-نکته‌ی مهم: CoinGecko در پلن رایگان، OHLC خام را فقط برای بازه‌های محدودی
-می‌دهد (1/7/14/30/90/180/365 روز) و خروجی آن [timestamp, open, high, low, close]
-است — بدون حجم معاملات. برای حجم از اندپوینت market_chart استفاده و بر اساس
-timestamp با کندل‌ها merge می‌کنیم.
+Important note: on the free plan, CoinGecko gives raw OHLC only for limited
+ranges (1/7/14/30/90/180/365 days) and its output is [timestamp, open, high,
+low, close] — without trading volume. For volume we use the market_chart
+endpoint and merge it with the candles by timestamp.
 """
 
 import time
@@ -20,7 +20,7 @@ import config
 
 
 class CoinGeckoError(Exception):
-    """خطای مربوط به ارتباط یا پاسخ CoinGecko."""
+    """Error related to the connection or CoinGecko's response."""
     pass
 
 
@@ -36,7 +36,7 @@ class CoinGeckoClient:
     # Internal helpers
     # ------------------------------------------------------------------
     def _throttle(self):
-        """جلوگیری از برخورد با محدودیت نرخ درخواست."""
+        """Avoiding hitting the request rate limit."""
         elapsed = time.time() - self._last_request_time
         wait = config.MIN_SECONDS_BETWEEN_REQUESTS - elapsed
         if wait > 0:
@@ -53,7 +53,7 @@ class CoinGeckoClient:
                     url, params=params, timeout=config.REQUEST_TIMEOUT_SECONDS
                 )
                 if response.status_code == 429:
-                    # محدودیت نرخ — کمی بیشتر صبر کن و دوباره تلاش کن
+                    # Rate limit — wait a bit more and try again
                     time.sleep(config.REQUEST_RETRY_DELAY_SECONDS * attempt)
                     continue
                 response.raise_for_status()
@@ -68,19 +68,19 @@ class CoinGeckoClient:
     # ------------------------------------------------------------------
     def search_coin_id(self, query: str) -> str:
         """
-        تبدیل نماد یا نام ارز (مثل 'btc' یا 'bitcoin') به coin_id که
-        CoinGecko برای سایر endpoint ها لازم دارد.
+        Converts a currency symbol or name (e.g. 'btc' or 'bitcoin') to the coin_id
+        that CoinGecko requires for its other endpoints.
         """
         data = self._get("/search", {"query": query})
         coins = data.get("coins", [])
         if not coins:
             raise CoinGeckoError(f"ارزی با نام/نماد '{query}' پیدا نشد.")
-        # اولین نتیجه معمولاً معتبرترین/پرحجم‌ترین تطابق است
+        # The first result is usually the most valid/highest-volume match
         return coins[0]["id"]
 
     def get_ohlc(self, coin_id: str, vs_currency: str, days: int) -> list:
         """
-        خروجی: لیستی از [timestamp_ms, open, high, low, close]
+        Output: a list of [timestamp_ms, open, high, low, close]
         """
         params = {"vs_currency": vs_currency, "days": days}
         data = self._get(f"/coins/{coin_id}/ohlc", params)
@@ -90,22 +90,22 @@ class CoinGeckoClient:
 
     def get_market_chart(self, coin_id: str, vs_currency: str, days: int) -> dict:
         """
-        خروجی شامل prices, market_caps, total_volumes — هرکدام لیستی
-        از [timestamp_ms, value]. از این برای استخراج حجم معاملات استفاده می‌شود.
+        The output includes prices, market_caps, total_volumes — each a list
+        of [timestamp_ms, value]. This is used to extract trading volume.
         """
         params = {"vs_currency": vs_currency, "days": days}
         return self._get(f"/coins/{coin_id}/market_chart", params)
 
     def get_candles_with_volume(self, coin_id: str, vs_currency: str, days: int) -> list:
         """
-        کندل‌های OHLC را با حجم معاملات (از market_chart) ترکیب می‌کند.
+        Combines the OHLC candles with trading volume (from market_chart).
 
-        نکته: دانه‌بندی market_chart معمولاً ریزتر از OHLC است (مثلاً حجم
-        ساعتی در برابر کندل 4ساعته)، پس به‌جای برداشتن «نزدیک‌ترین» نقطه،
-        همه‌ی نقاط حجمی که در بازه‌ی زمانی هر کندل (از پایان کندل قبلی تا
-        پایان کندل فعلی) قرار می‌گیرند را جمع می‌زنیم — دقیق‌تر از matching
-        تک‌نقطه‌ای.
-        خروجی: لیستی از دیکشنری {timestamp, open, high, low, close, volume}
+        Note: market_chart granularity is usually finer than OHLC (e.g. hourly
+        volume against a 4-hour candle), so instead of taking the "nearest" point,
+        we sum all volume points that fall within each candle's time range (from
+        the end of the previous candle to the end of the current candle) — more
+        accurate than single-point matching.
+        Output: a list of dicts {timestamp, open, high, low, close, volume}
         """
         ohlc = self.get_ohlc(coin_id, vs_currency, days)
         chart = self.get_market_chart(coin_id, vs_currency, days)

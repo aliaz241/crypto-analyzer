@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 tests/test_paper_trading.py
-تست آفلاین موتور معاملات کاغذی با قیمت‌های جعلی تزریقی — بدون اینترنت:
+Offline test of the paper trading engine with injected fake prices — no internet:
 
     python tests/test_paper_trading.py
 
-پوشش: بازکردن لانگ و رسیدن به هدف (PnL خالص از کارمزد)، حد ضرر،
-تریلینگ‌استاپ، تقارن شورت، و مکانیک حالت خودکار (با اسکنر stub).
+Coverage: opening a long and reaching the target (net PnL after fees), stop
+loss, trailing stop, short symmetry, and the auto-mode mechanics (with a stub scanner).
 """
 
 import os
@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import paper_trading as paper
 
-# فایل وضعیت موقت + تابع قیمت قابل‌کنترل
+# Temporary state file + a controllable price function
 paper.STATE_FILE = os.path.join(tempfile.mkdtemp(), "paper_state_test.json")
 PRICES = {"BTCUSDT": 100.0}
 paper.set_price_function(lambda sym: PRICES[sym])
@@ -36,7 +36,7 @@ def approx(a, b, tol=1e-6):
     return abs(a - b) <= tol
 
 
-# --- ۱) لانگ تا هدف -------------------------------------------------------
+# --- 1) Long to target ---
 paper.reset_account(CHAT)
 pos = paper.open_position(CHAT, "BTC", "long", 1000, stop=90, target=120)
 check("باز شدن لانگ", pos["qty"] == 10.0 and pos["entry_price"] == 100.0)
@@ -48,7 +48,7 @@ PRICES["BTCUSDT"] = 120.0
 events = paper.evaluate(CHAT)
 check("بسته‌شدن با هدف", len(events) == 1 and events[0]["position"]["exit_reason"] == "target")
 rec = events[0]["position"]
-# ناخالص ۲۰۰، کارمزد ورود ۱، کارمزد خروج ۱ → خالص ۱۹۸ ؛ R = 198 / (10×10) = 1.98
+# Gross 200, entry fee 1, exit fee 1 → net 198 ; R = 198 / (10×10) = 1.98
 check("PnL خالص از کارمزد", approx(rec["net_pnl"], 198.0), f"net={rec['net_pnl']}")
 check("R معامله", approx(rec["r_multiple"], 1.98), f"R={rec['r_multiple']}")
 acct = paper.get_account(CHAT)
@@ -56,30 +56,30 @@ check("برگشت موجودی", approx(acct["balance"], 10198.0), f"balance={ac
 s = paper.portfolio_summary(CHAT)
 check("خلاصه سبد: برد و نرخ برد", s["trades"] == 1 and s["win_rate_pct"] == 100.0)
 
-# --- ۲) حد ضرر -------------------------------------------------------------
+# --- 2) Stop loss ---
 PRICES["BTCUSDT"] = 100.0
 paper.open_position(CHAT, "BTC", "long", 1000, stop=90)
 PRICES["BTCUSDT"] = 89.0
 events = paper.evaluate(CHAT)
 rec = events[0]["position"]
-# ناخالص ‎−۱۱۰، کارمزدها ۲ → خالص ‎−۱۱۲
+# Gross −110, fees 2 → net −112
 check("بسته‌شدن با حد ضرر", rec["exit_reason"] == "stop" and approx(rec["net_pnl"], -112.0),
       f"reason={rec['exit_reason']} net={rec['net_pnl']}")
 
-# --- ۳) تریلینگ‌استاپ -------------------------------------------------------
+# --- 3) Trailing stop ---
 PRICES["BTCUSDT"] = 100.0
 paper.open_position(CHAT, "BTC", "long", 1000, trailing_pct=5)
 PRICES["BTCUSDT"] = 110.0
 check("تریلینگ: هنوز باز در اوج", paper.evaluate(CHAT) == [])
-PRICES["BTCUSDT"] = 105.0   # استاپ تریلینگ = 104.5 → هنوز باز
+PRICES["BTCUSDT"] = 105.0   # Trailing stop = 104.5 → still open
 check("تریلینگ: بالای استاپ شناور", paper.evaluate(CHAT) == [])
-PRICES["BTCUSDT"] = 104.0   # پایین‌تر از 104.5 → بسته
+PRICES["BTCUSDT"] = 104.0   # Below 104.5 → closed
 events = paper.evaluate(CHAT)
 rec = events[0]["position"]
 check("تریلینگ: بسته‌شدن", rec["exit_reason"] == "trailing" and approx(rec["net_pnl"], 38.0),
       f"reason={rec['exit_reason']} net={rec['net_pnl']}")
 
-# --- ۴) تقارن شورت ----------------------------------------------------------
+# --- 4) Short symmetry ---
 PRICES["BTCUSDT"] = 100.0
 pos = paper.open_position(CHAT, "BTC", "short", 1000, stop=110, target=80)
 PRICES["BTCUSDT"] = 80.0
@@ -87,19 +87,19 @@ events = paper.evaluate(CHAT)
 rec = events[0]["position"]
 check("شورت: هدف و تقارن PnL", rec["exit_reason"] == "target" and approx(rec["net_pnl"], 198.0),
       f"net={rec['net_pnl']}")
-# بستن دستی شورت در سود کمتر
+# Manually closing the short at a smaller profit
 PRICES["BTCUSDT"] = 100.0
 pos = paper.open_position(CHAT, "BTC", "short", 1000)
 PRICES["BTCUSDT"] = 90.0
 rec = paper.close_position(CHAT, pos["id"])
 check("شورت: بستن دستی", rec["exit_reason"] == "manual" and approx(rec["net_pnl"], 98.0),
       f"net={rec['net_pnl']}")
-# بدون حد ضرر → R باید null باشد
+# Without a stop loss → R must be null
 check("بدون حد ضرر: R خالی", rec["r_multiple"] is None)
 
-# --- ۵) اعتبارسنجی ------------------------------------------------------------
+# --- 5) Validation ---
 try:
-    paper.open_position(CHAT, "BTC", "long", 500, stop=150)  # استاپ بالای ورود برای لانگ
+    paper.open_position(CHAT, "BTC", "long", 500, stop=150)  # Stop above entry for a long
     check("اعتبارسنجی جهت استاپ", False)
 except paper.PaperError:
     check("اعتبارسنجی جهت استاپ", True)
@@ -109,7 +109,7 @@ try:
 except paper.PaperError:
     check("اعتبارسنجی موجودی", True)
 
-# --- ۶) مکانیک حالت خودکار (اسکنر stub) --------------------------------------
+# --- 6) Auto-mode mechanics (stub scanner) ---
 import scanner
 from analysis import analyzer
 
@@ -126,8 +126,8 @@ scanner.score_candidate = lambda df, rep, sym, tf: {
     "symbol": sym.upper(), "timeframe": tf, "direction": "long",
     "direction_fa": "لانگ (خرید)", "score": 75.0, "entry": 100.0,
     "stop": 90.0, "target": 120.0, "price": 100.0,
-    # قرارداد جدید نامزد بعد از لایه‌ی EV: تصمیم قابل اقدام + آمار EV
-    # (attach_ev_decision برای نامزدی که هر دو کلید را دارد دست نمی‌زند)
+    # The candidate's new contract after the EV layer: an actionable decision + EV statistics
+    # (attach_ev_decision does not touch a candidate that has both keys)
     "decision": "BUY",
     "ev": {"expectancy_r": 0.3, "n_trades": 40, "reliability": "ok"},
 }
@@ -137,25 +137,25 @@ finally:
     analyzer.fetch_candles_binance, analyzer.build_report, scanner.score_candidate = (
         _orig_fetch, _orig_build, _orig_score)
 opened = [a for a in actions if "باز شد" in a]
-# اسکن ۲۰ ارز است ولی سقف هم‌زمان ۳ است؛ همه روی BTCUSDT قیمت دارند ولی
-# ارزهای دیگر هم با همان stub امتیاز می‌گیرند — قیمتشان از _price_fn می‌آید
-# و برای نمادهای دیگر KeyError می‌دهد و رد می‌شوند؛ فقط BTC باز می‌شود.
+# The scan is 20 symbols but the simultaneous cap is 3; all have a price on BTCUSDT but
+# other symbols also get a score with the same stub — their price comes from _price_fn
+# and for other symbols it raises KeyError and they are skipped; only BTC opens.
 check("خودکار: بازشدن پوزیشن از روی امتیاز", len(opened) >= 1, f"actions={actions}")
 positions = paper.list_positions(CHAT)
 if positions:
     p0 = positions[0]
-    # ریسک ۱٪ از equity ‏(۱۰۰۰۰) = ۱۰۰ → مبلغ = 100/(10) × 100 = 1000
+    # Risk 1% of equity (10000) = 100 → amount = 100/(10) × 100 = 1000
     check("خودکار: سایز بر اساس ریسک", approx(p0["amount_usdt"], 1000.0, tol=1.0),
           f"amount={p0['amount_usdt']}")
     check("خودکار: استاپ/هدف از نامزد", p0["stop"] == 90.0 and p0["target"] == 120.0)
     check("خودکار: برچسب منشأ auto", p0.get("source") == "auto")
     check("برچسب منشأ در متن پوزیشن‌ها", "خودکار" in paper.positions_text(CHAT))
-# هم‌زیستی دستی و خودکار در یک حساب + برچسب در تاریخچه
-paper.open_position(CHAT, "BTC", "long", 100)   # دستی، کنار پوزیشن خودکار
+# Manual and auto coexisting in one account + the label in the history
+paper.open_position(CHAT, "BTC", "long", 100)   # Manual, next to the auto position
 check("هم‌زیستی دستی و خودکار در یک حساب",
       {p.get("source") for p in paper.list_positions(CHAT)} == {"manual", "auto"})
 PRICES["BTCUSDT"] = 130.0
-paper.evaluate(CHAT)   # هر دو با هدف بسته می‌شوند (دستی بدون هدف می‌ماند → دستی بسته نمی‌شود)
+paper.evaluate(CHAT)   # Both are closed by target (the manual one has no target → the manual one is not closed)
 hist = paper.history(CHAT)
 check("برچسب منشأ در تاریخچه", all("source" in h for h in hist) and
       any(h["source"] == "auto" for h in hist))

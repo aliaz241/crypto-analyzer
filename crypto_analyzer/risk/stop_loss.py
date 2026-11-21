@@ -1,6 +1,6 @@
 """
 risk/stop_loss.py
-محاسبه‌ی حد ضرر به دو روش: بر پایه‌ی ATR و بر پایه‌ی ساختار قیمت (آخرین سقف/کف).
+Computing the stop loss by two methods: based on ATR and based on price structure (the last high/low).
 """
 
 import pandas as pd
@@ -16,8 +16,8 @@ from indicators.levels import find_swing_points
 def atr_based_stop_loss(df: pd.DataFrame, direction: str,
                          atr_period: int = None, multiplier: float = None) -> dict:
     """
-    حد ضرر بر پایه‌ی چند برابر ATR از قیمت فعلی — متناسب با نوسان واقعی بازار.
-    direction: 'long' یا 'short'
+    Stop loss based on a multiple of ATR from the current price — proportional to the market's real volatility.
+    direction: 'long' or 'short'
     """
     if atr_period is None:
         atr_period = config.ATR_PERIOD
@@ -50,8 +50,9 @@ def atr_based_stop_loss(df: pd.DataFrame, direction: str,
 
 def structure_based_stop_loss(df: pd.DataFrame, direction: str, lookback_swings: int = 1) -> dict:
     """
-    حد ضرر بر پایه‌ی آخرین سقف/کف ساختاری (swing) — منطقی‌تر از نظر پرایس‌اکشن
-    چون نقطه‌ای را انتخاب می‌کند که اگر بشکند یعنی فرضیه‌ی تحلیل غلط بوده.
+    Stop loss based on the last structural high/low (swing) — more logical from a
+    price-action standpoint, because it picks the point which, if broken, means
+    the analysis hypothesis was wrong.
     """
     swing_df = find_swing_points(df)
     current_price = df["close"].iloc[-1]
@@ -80,8 +81,9 @@ def structure_based_stop_loss(df: pd.DataFrame, direction: str, lookback_swings:
 
 def combined_stop_loss(df: pd.DataFrame, direction: str) -> dict:
     """
-    هر دو روش را محاسبه و حد ضرر محافظه‌کارانه‌تر (دورتر از قیمت فعلی، یعنی ریسک کمتر
-    احتمال خوردن استاپ زودهنگام) را به عنوان پیشنهاد اصلی برمی‌گرداند.
+    Computes both methods and returns the more conservative stop loss (farther
+    from the current price, i.e. less risk of an early stop hit) as the main
+    suggestion.
     """
     atr_sl = atr_based_stop_loss(df, direction)
     structure_sl = structure_based_stop_loss(df, direction)
@@ -90,7 +92,7 @@ def combined_stop_loss(df: pd.DataFrame, direction: str) -> dict:
     if not candidates:
         return {"stop_loss": None, "reason": "هیچ‌کدام از دو روش قابل محاسبه نبود"}
 
-    # محافظه‌کارانه‌تر = فاصله‌ی بیشتر از قیمت فعلی
+    # More conservative = farther from the current price
     recommended = max(candidates, key=lambda x: x["distance"])
 
     return {

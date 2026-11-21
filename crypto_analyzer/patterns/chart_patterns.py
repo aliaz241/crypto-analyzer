@@ -1,17 +1,19 @@
 """
 patterns/chart_patterns.py
-تشخیص الگوهای نموداری (هندسی) بر پایه‌ی swing high/low.
+Detecting chart (geometric) patterns based on swing high/low.
 
-برخلاف الگوهای کندلی که رویدادهای تک‌کندلی هستند، این الگوها چند کندل را
-در بر می‌گیرند. هر الگوی شناسایی‌شده به صورت دیکشنری با کلیدهای زیر برگردانده
-می‌شود تا هم برای گزارش فعلی و هم برای بک‌تست قابل استفاده باشد:
+Unlike candlestick patterns, which are single-candle events, these patterns
+span several candles. Each detected pattern is returned as a dict with the
+keys below, so it can be used both for the current report and for the backtest:
     name, fa, bias, start_index, completion_index, neckline, target, pattern_price
 
-⚠️ نسخه‌ی ۲ — تأیید خط گردن (رفع مشکل ممیزی شماره‌ی ۲): یک شکل‌گیری (سقف/کف
-دوقلو یا سر و شانه) فقط وقتی «کامل‌شده» محسوب می‌شود که قیمت بعد از نقطه‌ی
-سوئینگ دوم با بسته‌شدن کندل، خط گردن را در جهت bias الگو بشکند.
-completion_index کندل تأیید (شکست) است، نه کندل سوئینگ. شکل‌گیریِ تأییدنشده
-نه در گزارش الگوهای اخیر می‌آید و نه در نمونه‌های بک‌تست شمرده می‌شود.
+⚠️ Version 2 — neckline confirmation (fix for audit issue no. 2): a formation
+(double top/bottom or head and shoulders) counts as "completed" only when,
+after the second swing point, the price breaks the neckline in the direction
+of the pattern's bias with a candle close. completion_index is the candle of
+the confirmation (break), not the swing candle. An unconfirmed formation
+appears neither in the recent-patterns report nor is it counted in backtest
+samples.
 """
 
 import numpy as np
@@ -29,9 +31,9 @@ from indicators.levels import find_swing_points
 # ---------------------------------------------------------------------------
 def get_alternating_swings(df: pd.DataFrame, lookback: int = None) -> list:
     """
-    لیستی زیگزاگی از swing point ها برمی‌گرداند که بین high و low تناوب دارند.
-    اگر دو swing پشت‌سرهم از یک نوع باشند، فقط شدیدترین (بالاترین/پایین‌ترین) حفظ می‌شود.
-    خروجی: لیستی از دیکشنری {"pos": موقعیت عددی در df, "index": ایندکس df, "price": قیمت, "type": "high"/"low"}
+    Returns a zigzag list of swing points that alternate between high and low.
+    If two consecutive swings are of the same type, only the most extreme (highest/lowest) is kept.
+    Output: a list of dicts {"pos": numeric position in df, "index": df index, "price": price, "type": "high"/"low"}
     """
     swing_df = find_swing_points(df, lookback)
     points = []
@@ -50,7 +52,7 @@ def get_alternating_swings(df: pd.DataFrame, lookback: int = None) -> list:
     for p in points[1:]:
         last = alternating[-1]
         if p["type"] == last["type"]:
-            # دو swing هم‌نوع پشت سر هم — فقط شدیدترین را نگه دار
+            # Two consecutive same-type swings — keep only the most extreme
             if p["type"] == "high" and p["price"] > last["price"]:
                 alternating[-1] = p
             elif p["type"] == "low" and p["price"] < last["price"]:
@@ -67,26 +69,27 @@ def _pct_diff(a: float, b: float) -> float:
 def _find_neckline_confirmation(df: pd.DataFrame, from_pos: int, neckline: float,
                                 invalidation: float, direction: str):
     """
-    تأیید شکست خط گردن (رفع مشکل ممیزی شماره‌ی ۲).
-    از کندل بعد از نقطه‌ی سوئینگ دوم (from_pos) به جلو می‌رود:
-    - جهت "above" (الگوهای صعودی): اولین کندلی که close آن بالای خط گردن بسته شود.
-    - جهت "below" (الگوهای نزولی): اولین کندلی که close آن پایین خط گردن بسته شود.
-    اگر قبل از شکست خط گردن، قیمت از سطح بطلان عبور کند (close آن‌طرف سطح
-    بطلان)، شکل‌گیری مرده است و None برمی‌گردد؛ اگر تا انتهای داده هم شکست رخ
-    ندهد باز None برمی‌گردد — یعنی الگو هنوز «کامل‌شده» نیست.
-    خروجی: موقعیت عددی کندل تأیید (pos) یا None.
+    Neckline-break confirmation (fix for audit issue no. 2).
+    Moves forward from the candle after the second swing point (from_pos):
+    - Direction "above" (bullish patterns): the first candle whose close closes above the neckline.
+    - Direction "below" (bearish patterns): the first candle whose close closes below the neckline.
+    If, before the neckline break, the price crosses the invalidation level
+    (a close on the other side of the invalidation level), the formation is
+    dead and None is returned; if no break happens by the end of the data,
+    None is returned again — i.e. the pattern is not yet "completed".
+    Output: the numeric position of the confirmation candle (pos) or None.
     """
     closes = df["close"].values
     for pos in range(from_pos + 1, len(df)):
         c = closes[pos]
         if direction == "above":
             if c < invalidation:
-                return None  # قبل از تأیید، الگو باطل شد
+                return None  # The pattern was invalidated before confirmation
             if c > neckline:
                 return pos
         else:  # below
             if c > invalidation:
-                return None  # قبل از تأیید، الگو باطل شد
+                return None  # The pattern was invalidated before confirmation
             if c < neckline:
                 return pos
     return None
@@ -106,7 +109,7 @@ def detect_double_top(df: pd.DataFrame, swings: list) -> list:
                 if height <= 0:
                     continue
                 invalidation = max(a["price"], b["price"])
-                # الگو فقط با شکست رو به پایین خط گردن بعد از قله‌ی دوم کامل می‌شود
+                # The pattern completes only with a downward break of the neckline after the second peak
                 conf_pos = _find_neckline_confirmation(
                     df, b["pos"], neck["price"], invalidation, "below")
                 if conf_pos is None:
@@ -133,7 +136,7 @@ def detect_double_bottom(df: pd.DataFrame, swings: list) -> list:
                 if height <= 0:
                     continue
                 invalidation = min(a["price"], b["price"])
-                # الگو فقط با شکست رو به بالای خط گردن بعد از کف دوم کامل می‌شود
+                # The pattern completes only with an upward break of the neckline after the second trough
                 conf_pos = _find_neckline_confirmation(
                     df, b["pos"], neck["price"], invalidation, "above")
                 if conf_pos is None:
@@ -168,7 +171,7 @@ def detect_head_and_shoulders(df: pd.DataFrame, swings: list) -> list:
         height = head["price"] - neckline
         if height <= 0:
             continue
-        # الگو فقط با شکست رو به پایین خط گردن بعد از شانه‌ی راست کامل می‌شود
+        # The pattern completes only with a downward break of the neckline after the right shoulder
         conf_pos = _find_neckline_confirmation(
             df, rs["pos"], neckline, head["price"], "below")
         if conf_pos is None:
@@ -200,7 +203,7 @@ def detect_inverse_head_and_shoulders(df: pd.DataFrame, swings: list) -> list:
         height = neckline - head["price"]
         if height <= 0:
             continue
-        # الگو فقط با شکست رو به بالای خط گردن بعد از شانه‌ی راست کامل می‌شود
+        # The pattern completes only with an upward break of the neckline after the right shoulder
         conf_pos = _find_neckline_confirmation(
             df, rs["pos"], neckline, head["price"], "above")
         if conf_pos is None:
@@ -217,13 +220,13 @@ def detect_inverse_head_and_shoulders(df: pd.DataFrame, swings: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# Triangles & Wedges (بر پایه‌ی رگرسیون خطی روی swing ها در یک پنجره‌ی لغزان)
+# Triangles & Wedges (based on linear regression on swings in a sliding window)
 # ---------------------------------------------------------------------------
-FLAT_SLOPE_THRESHOLD_PCT = 0.05   # شیب کمتر از این (درصد قیمت در هر کندل) = "تقریباً تخت"
+FLAT_SLOPE_THRESHOLD_PCT = 0.05   # A slope smaller than this (percent of price per candle) = "almost flat"
 
 
 def _fit_line(points: list):
-    """points: لیستی از (pos, price). خروجی: (slope, intercept) یا None اگر کافی نبود."""
+    """points: a list of (pos, price). Output: (slope, intercept) or None if not enough."""
     if len(points) < 2:
         return None
     xs = np.array([p[0] for p in points])
@@ -238,8 +241,8 @@ def _scan_triangle_wedge_windows(df: pd.DataFrame, window: int = 40, step: int =
     n = len(df)
 
     starts = list(range(0, n - window, step))
-    # مطمئن شو آخرین پنجره دقیقاً به انتهای داده می‌رسد تا کندل‌های اخیر
-    # به خاطر گام ثابت از قلم نیفتند
+    # Make sure the last window reaches exactly the end of the data so recent candles
+    # are not dropped because of the fixed step
     if n - window >= 0 and (not starts or starts[-1] != n - window):
         starts.append(n - window)
 
@@ -278,7 +281,7 @@ def _scan_triangle_wedge_windows(df: pd.DataFrame, window: int = 40, step: int =
 
         last_close = df["close"].iloc[end - 1]
 
-        # invalidation = سطحی که اگر قیمت به آن برگردد، فرضیه‌ی الگو باطل می‌شود
+        # invalidation = the level at which, if price returns to it, the pattern hypothesis is invalidated
         pattern = None
         if upper_flat and lower_slope_pct > FLAT_SLOPE_THRESHOLD_PCT:
             pattern = {
@@ -291,8 +294,8 @@ def _scan_triangle_wedge_windows(df: pd.DataFrame, window: int = 40, step: int =
                 "target": pattern_low - height, "invalidation": pattern_high,
             }
         elif upper_slope_pct < -FLAT_SLOPE_THRESHOLD_PCT and lower_slope_pct > FLAT_SLOPE_THRESHOLD_PCT:
-            # مثلث متقارن ذاتاً بدون جهت است؛ موقعیت قیمت فعلی نسبت به وسط مثلث
-            # به عنوان یک «تمایل» عملیاتی در نظر گرفته می‌شود، نه قطعیت کلاسیک.
+            # The symmetrical triangle is inherently directionless; the current price's position relative to the triangle's middle
+            # is taken as an operational "bias", not classical certainty.
             leaning_bullish = last_close >= (pattern_high + pattern_low) / 2
             pattern = {
                 "name": "symmetrical_triangle",
@@ -315,14 +318,14 @@ def _scan_triangle_wedge_windows(df: pd.DataFrame, window: int = 40, step: int =
             }
 
         if pattern:
-            # تأیید شکست مرز (رفع مشکل ممیزی شماره‌ی ۲ برای مثلث‌ها و گوه‌ها):
-            # اسکنر پنجره‌ای خطوط مرز را با رگرسیون روی سوئینگ‌ها می‌سازد و نقطه‌ی
-            # «تکمیل» ذاتاً انتهای همان پنجره است؛ پس شکستِ چندکندلیِ جداگانه مثل
-            # الگوهای سوئینگی قابل ردیابی تمیز نیست. به‌عنوان حداقل شرط، close
-            # کندل آخر پنجره باید از خط مرزیِ نزدیک‌تر در جهت bias الگو عبور
-            # کرده باشد (صعودی: بالای خط بالایی / نزولی: پایین خط پایینی).
-            # بدون این عبور، شکل‌گیری فقط یک تراکم قیمتی است و «الگوی کامل‌شده»
-            # محسوب نمی‌شود — نه در گزارش می‌آید و نه در بک‌تست شمرده می‌شود.
+            # Break-of-boundary confirmation (fix for audit issue no. 2 for triangles and wedges):
+            # The windowed scanner builds the boundary lines by regression on the swings, and the
+            # "completion" point is inherently the end of that same window; so a separate multi-candle
+            # break, like the swing patterns, cannot be tracked cleanly. As a minimum condition, the close
+            # of the window's last candle must have crossed the nearer boundary line in the direction of the pattern's bias
+            # (bullish: above the upper line / bearish: below the lower line).
+            # Without this crossing, the formation is only a price congestion and does not count as a
+            # "completed pattern" — it appears neither in the report nor is it counted in the backtest.
             end_pos = end - 1
             upper_at_end = upper_fit[0] * end_pos + upper_fit[1]
             lower_at_end = lower_fit[0] * end_pos + lower_fit[1]
@@ -340,8 +343,8 @@ def _scan_triangle_wedge_windows(df: pd.DataFrame, window: int = 40, step: int =
             })
             found.append(pattern)
 
-    # حذف تشخیص‌های همپوشان: وقتی پنجره‌های پیاپی همان نوع الگو را نشان می‌دهند
-    # (چون پنجره‌ها با گام کوچک‌تر از عرضشان جلو می‌روند)، فقط جدیدترین را نگه می‌داریم.
+    # Removing overlapping detections: when consecutive windows show the same pattern type
+    # (because the windows advance with a step smaller than their width), we keep only the newest.
     deduped = []
     for p in found:
         if deduped and deduped[-1]["name"] == p["name"] and \
@@ -358,8 +361,8 @@ def _scan_triangle_wedge_windows(df: pd.DataFrame, window: int = 40, step: int =
 # ---------------------------------------------------------------------------
 def scan_all(df: pd.DataFrame) -> list:
     """
-    همه‌ی الگوهای نموداری را روی کل تاریخچه اسکن می‌کند.
-    خروجی: لیستی از دیکشنری الگو (برای گزارش فعلی و برای بک‌تست قابل استفاده است).
+    Scans all chart patterns over the whole history.
+    Output: a list of pattern dicts (usable for the current report and for the backtest).
     """
     swings = get_alternating_swings(df)
     results = []
@@ -374,7 +377,7 @@ def scan_all(df: pd.DataFrame) -> list:
 
 
 def latest_patterns(df: pd.DataFrame, recent_candles: int = 15) -> list:
-    """فقط الگوهایی که completion_index آن‌ها در 'recent_candles' کندل آخر است."""
+    """Only the patterns whose completion_index is in the last 'recent_candles' candles."""
     all_patterns = scan_all(df)
     cutoff_pos = len(df) - recent_candles
     return [p for p in all_patterns if df.index.get_loc(p["completion_index"]) >= cutoff_pos]

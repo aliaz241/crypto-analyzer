@@ -1,21 +1,23 @@
 """
 backtest/calibration.py
-گزارش کالیبراسیون — ابزار تحلیلی افزودنی (گام ۷). فقط روی خروجی
-backtest/system_backtest کار می‌کند و هیچ محاسبه‌ی موجودی را تغییر نمی‌دهد.
+Calibration report — additive analysis tool (step 7). It only works on the
+output of backtest/system_backtest and changes no existing computation.
 
-هدف: نشان دهد روی داده‌ی تست‌شده، کدام بازه‌های امتیاز و کدام مؤلفه‌ها
-واقعاً امید ریاضی مثبت داشته‌اند و کدام‌ها فقط «ظاهر» داشته‌اند:
+Goal: show, on the tested data, which score ranges and which components
+actually had positive expected value and which only had the "appearance":
 
-- بر اساس باکت امتیاز: 55-60 | 60-70 | 70-80 | 80+
-  (لاگ آستانه‌ی پایین‌تر، ابرمجموعه‌ی بقیه است؛ باکت هر معامله از
-  score خودش خوانده می‌شود.)
-- بر اساس حضور/قدرت هر مؤلفه: معامله‌ها به «مؤلفه قوی» (حداقل نصف سقفش)
-  و «بقیه» تقسیم و امید ریاضی هر گروه جدا حساب می‌شود. برای مؤلفه‌ی الگو،
-  «حضور الگو» (pattern نام‌دار) هم جدا گزارش می‌شود.
+- By score bucket: 55-60 | 60-70 | 70-80 | 80+
+  (the lower-threshold log is a superset of the rest; each trade's bucket is
+  read from its own score.)
+- By presence/strength of each component: trades are split into "strong
+  component" (at least half its cap) and "the rest", and each group's
+  expected value is computed separately. For the pattern component,
+  "pattern presence" (a named pattern) is also reported separately.
 
-⚠️ این‌ها آمار همان دوره‌ی تاریخی تست‌شده‌اند؛ کالیبراسیون روی گذشته
-تضمین نمی‌کند همان مؤلفه در آینده هم بهترین باشد (خطر اورفیت هست —
-برای همین بخش out_sample را جدا هم می‌توان گرفت).
+⚠️ These are statistics of the same tested historical period; calibration on
+the past does not guarantee the same component will be best in the future
+(there is overfitting risk — that is why the out_sample part can also be
+taken separately).
 """
 
 import sys
@@ -42,7 +44,7 @@ _COMPONENT_FA = {
 
 
 def _pick_trades(result: dict, base_threshold: str = "55", segment: str = "all") -> list:
-    """لاگ معامله‌های یک آستانه (پیش‌فرض پایین‌ترین = ابرمجموعه) + فیلتر بخش."""
+    """Trade log of one threshold (default: the lowest = superset) + segment filter."""
     data = result["thresholds"][base_threshold]
     trades = data["trades"]
     if segment == "in":
@@ -54,7 +56,7 @@ def _pick_trades(result: dict, base_threshold: str = "55", segment: str = "all")
 
 def calibrate(result: dict, base_threshold: str = "55", segment: str = "all") -> dict:
     """
-    خروجی: {"buckets": {label: metrics}, "components": {name: {"strong": m, "rest": m}},
+    Output: {"buckets": {label: metrics}, "components": {name: {"strong": m, "rest": m}},
             "pattern_presence": {"with": m, "without": m}, "trades_used": n}
     """
     trades = _pick_trades(result, base_threshold, segment)
@@ -78,22 +80,26 @@ def calibrate(result: dict, base_threshold: str = "55", segment: str = "all") ->
 
 
 # ---------------------------------------------------------------------------
-# تحلیل حذف تک‌تک مؤلفه‌ها (Leave-One-Out) — افزودنی، پورت از پک خارجی
+# Leave-One-Out component ablation analysis — additive, ported from an external pack
 # ---------------------------------------------------------------------------
 def loo_analysis(result: dict, base_threshold: str = "55",
                  segment: str = "out") -> dict:
     """
-    روش (سازگار با داده‌ی ما): لاگ معامله‌ی آستانه‌ی پایه برای هر معامله
-    «امتیاز کل» و «امتیاز هر مؤلفه» را نگه داشته است. صفرکردن یک مؤلفه فقط
-    امتیاز کل را کم می‌کند (جهت، ورود، حد ضرر و هدف به امتیاز کل وابسته
-    نیستند)، پس دقیقاً می‌شود از همان لاگ، زیرمجموعه‌ای را نگه داشت که
-    بدون آن مؤلفه هم از آستانه می‌گذرد و امید ریاضی‌اش را دوباره حساب کرد.
-    - delta مثبت = حذف مؤلفه امید ریاضی را بهتر کرد → مؤلفه در این دوره
-      داشته ضرر می‌زده (نویز/وزن نادرست)، نه سیگنال.
-    - delta منفی = حذفش اوضاع را بدتر کرد → مؤلفه داشته کار مفید می‌کرده.
-    ⚠️ اثر انتخاب (selection) هم داخل delta هست: با حذف مؤلفه بعضی معامله‌ها
-    کلاً از مجموعه می‌افتند. و این آمارِ همان یک دوره/نماد است — حکم کلی نیست.
-    خروجی: {"base": metrics, "threshold": float, "segment": str,
+    Method (compatible with our data): the base-threshold trade log has stored,
+    for each trade, the "total score" and "each component's score". Zeroing one
+    component only reduces the total score (direction, entry, stop loss and
+    target do not depend on the total score), so from the same log we can keep
+    exactly the subset that would still pass the threshold without that
+    component and recompute its expected value.
+    - positive delta = removing the component improved the expected value → in
+      this period the component was losing money (noise/wrong weight), not
+      signaling.
+    - negative delta = removing it made things worse → the component was doing
+      useful work.
+    ⚠️ The selection effect is also inside delta: with the component removed,
+    some trades drop out of the set entirely. And these are statistics of one
+    period/symbol — not a general verdict.
+    Output: {"base": metrics, "threshold": float, "segment": str,
             "trades_used": n,
             "components": {name: {"kept_trades", "expectancy_r", "delta_r"}}}
     """
@@ -117,7 +123,7 @@ def loo_analysis(result: dict, base_threshold: str = "55",
 
 def format_loo_fa(result: dict, base_threshold: str = "55",
                   segment: str = "out") -> str:
-    """جدول فارسی LOO: برای هر مؤلفه، تغییر امید ریاضی هنگام حذف آن."""
+    """Persian LOO table: for each component, the change in expected value when it is removed."""
     loo = loo_analysis(result, base_threshold, segment)
     seg_fa = {"all": "کل دوره", "in": "داخل نمونه", "out": "خارج نمونه"}[segment]
     b = loo["base"]
@@ -152,7 +158,7 @@ def _m_line(label: str, m: dict) -> str:
 
 def format_calibration_fa(result: dict, base_threshold: str = "55",
                           segment: str = "all") -> str:
-    """گزارش متنی فارسی کالیبراسیون."""
+    """Persian text report of the calibration."""
     cal = calibrate(result, base_threshold, segment)
     seg_fa = {"all": "کل دوره", "in": "داخل نمونه", "out": "خارج نمونه"}[segment]
     lines = [

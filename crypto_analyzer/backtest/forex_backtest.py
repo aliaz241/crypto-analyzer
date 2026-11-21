@@ -1,27 +1,27 @@
 """
 backtest/forex_backtest.py
-مدل هزینه‌ی فارکس و اجرای بک‌تست سیستمی فارکس با همان پشته‌ی نهایی
-کریپتو (تریلینگ پذیرفته‌شده + مجموعه‌امتیاز both/regime + دروازه‌ی EV).
+Forex cost model and running the forex system backtest with the same final
+crypto stack (accepted trailing + both/regime score sets + EV gate).
 
-چرا wrapper و نه پارامتر داخل run_system_backtest؟
-موتور سیستمی کریپتو هزینه را داخل _trade_r با کارمزد درصدی حساب می‌کند
-و دست‌کاری آن رفتار/اعداد کریپتو را به خطر می‌انداخت. اینجا شبیه‌سازی
-خود موتور پشته (improvement_runs/stack_engine — همان موتوری که
-matrix_final را ساخت) دوباره استفاده می‌شود، با این تفاوت که R هر
-معامله از (ورود، خروج، ریسک) خام با هزینه‌ی اسپردی فارکس بازحساب
-می‌شود:
+Why a wrapper and not a parameter inside run_system_backtest?
+The crypto system engine computes cost inside _trade_r with a percentage fee,
+and tampering with it would put crypto behavior/numbers at risk. Here the
+simulation of the stack engine itself (improvement_runs/stack_engine — the
+same engine that built matrix_final) is reused, with the difference that each
+trade's R is recomputed from the raw (entry, exit, risk) with the forex
+spread cost:
 
     cost_price = spread_pips × pip_size  +  slippage_pips × pip_size
-    R = (سود ناخالص قیمتی − cost_price) / |ورود − حد ضرر|
+    R = (gross price profit − cost_price) / |entry − stop loss|
 
-یعنی اسپرد رفت‌وبرگشت + اسلیپیج، در واحد قیمت، عیناً مثل کارمزد در
-فرمول _trade_r از سود کم می‌شود. اسپرد هر نماد: config.FOREX_SPREAD_PIPS
-(برای XAUUSD مقدار 2.5 «پیپ» 0.1 ـی = 0.25 واحد قیمت = ۲۵ سنت).
-سواپ/رول‌اور شبانه عمداً حساب نمی‌شود (نگهداری تا ۴۰ کندل؛ در
-FOREX_FA.md به‌عنوان قید ثبت است).
+i.e. round-trip spread + slippage, in price units, is deducted from profit
+exactly like the fee in the _trade_r formula. Each symbol's spread:
+config.FOREX_SPREAD_PIPS (for XAUUSD the value 2.5 "pips" of 0.1 = 0.25 price
+units = 25 cents). Overnight swap/rollover is deliberately not counted
+(holding up to 40 candles; recorded as a constraint in FOREX_FA.md).
 
-اعداد کریپتو دست نخورده‌اند: این ماژول هیچ تابع موجودی را تغییر
-نمی‌دهد و اثباتش در تست‌ها + رگرسیون (بازتولید matrix_final) آمده.
+Crypto numbers are untouched: this module changes no existing function, and
+the proof is in the tests + regression (reproducing matrix_final).
 """
 
 import os
@@ -33,15 +33,15 @@ import config
 from backtest.system_backtest import _metrics
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))            # پوشه‌ی crypto_analyzer_v2/
+    os.path.abspath(__file__))))            # The crypto_analyzer_v2/ folder
 _IMPROVEMENT = os.path.join(_ROOT, "improvement_runs")
 
 
 # ---------------------------------------------------------------------------
-# مدل هزینه
+# Cost model
 # ---------------------------------------------------------------------------
 def forex_cost_price(symbol: str) -> float:
-    """هزینه‌ی رفت‌وبرگشت یک معامله‌ی فارکس در واحد قیمت (اسپرد+اسلیپیج)."""
+    """Round-trip cost of one forex trade in price units (spread+slippage)."""
     sym = str(symbol).upper()
     pips = (config.FOREX_SPREAD_PIPS[sym]
             + getattr(config, "FOREX_SLIPPAGE_PIPS", 0.0))
@@ -50,7 +50,7 @@ def forex_cost_price(symbol: str) -> float:
 
 def forex_trade_r(direction: str, entry: float, exit_price: float,
                   risk: float, symbol: str) -> float:
-    """بازده معامله بر حسب R با هزینه‌ی اسپردی فارکس (معادل _trade_r)."""
+    """Trade return in R with the forex spread cost (equivalent of _trade_r)."""
     if risk <= 0:
         raise ValueError("risk باید مثبت باشد.")
     gross = (exit_price - entry) if direction == "long" else (entry - exit_price)
@@ -59,9 +59,9 @@ def forex_trade_r(direction: str, entry: float, exit_price: float,
 
 def reprice_records(records: list, symbol: str) -> list:
     """
-    رکوردهای فشرده‌ی موتور پشته ({p, s, mh:{hold:{r, o, entry, exit,
-    risk, dir}}}) را با هزینه‌ی فارکس دوباره قیمت‌گذاری می‌کند: فقط
-    کلید r عوض می‌شود؛ بقیه عین رکورد ورودی است.
+    Re-prices the stack engine's compact records ({p, s, mh:{hold:{r, o, entry, exit,
+    risk, dir}}}) with the forex cost: only the r key changes; the rest is
+    exactly the input record.
     """
     out = []
     for rec in records:
@@ -77,11 +77,11 @@ def reprice_records(records: list, symbol: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# دروازه‌ی EV (همان سمانتیک stage1_gate / stage4_matrix)
+# EV gate (same semantics as stage1_gate / stage4_matrix)
 # ---------------------------------------------------------------------------
 def _kept_bars(base_records: list, threshold: int, max_hold: int,
                bar_candles: int = 100) -> set:
-    """بارهایی که دروازه‌ی on نگه می‌دارد (آمار هر بار فقط از بارهای قبلی)."""
+    """The bars the gate keeps when on (each bar's statistics only from previous bars)."""
     def sim_of(rec):
         return rec["mh"].get(str(max_hold)) or rec["mh"].get(max_hold)
     by_bar = {}
@@ -102,10 +102,10 @@ def build_forex_result(symbol: str, timeframe: str, sets: dict,
                        meta: dict, df, thresholds=(55, 60, 65),
                        max_hold: int = 40) -> dict:
     """
-    از مجموعه‌امتیازهای قیمت‌گذاری‌شده با هزینه‌ی فارکس، نتیجه‌ی هم‌قالبِ
-    matrix_final می‌سازد: برای هر آستانه، معیارهای all/in/out + لاگ
-    معامله با segment. مجموعه‌امتیاز: 4h → "both"، 1d → "regime"
-    (دقیقاً قرارداد stage4_matrix) و دروازه روی سایه‌ی "base".
+    From the score sets priced with the forex cost, builds a result in the same
+    format as matrix_final: for each threshold, all/in/out metrics + the trade
+    log with segment. Score set: 4h → "both", 1d → "regime"
+    (exactly the stage4_matrix contract) and the gate on the "base" shadow.
     """
     symbol = symbol.upper()
     sets = {name: reprice_records(recs, symbol) for name, recs in sets.items()}
@@ -155,19 +155,19 @@ def build_forex_result(symbol: str, timeframe: str, sets: dict,
 
 def evaluate_forex_coin(symbol: str, df_main, df_daily=None):
     """
-    ارزیابی یک ترکیب فارکس با موتور پشته (improvement_runs/stack_engine)
-    و غنی‌سازی رکوردها با فیلدهای خام (entry/exit/risk/dir) برای
-    قیمت‌گذاری فارکس در build_forex_result.
+    Evaluates one forex combination with the stack engine (improvement_runs/stack_engine)
+    and enriches the records with raw fields (entry/exit/risk/dir) for
+    forex pricing in build_forex_result.
 
-    روش: _simulate_trade موتور پشته در طول ارزیابی با یک wrapper جایگزین
-    می‌شود که امضای اصلی را دقیق نگه می‌دارد و فقط (قیمت خروج، ورود،
-    ریسک، جهت) هر شبیه‌سازی را بر اساس (اندیس ورود، max_hold) ضبط
-    می‌کند؛ بعد از ارزیابی، خام‌ها داخل رکوردها ادغام می‌شوند. محاسبه‌ی
-    خود موتور (از جمله R کریپتوییِ موقت) دست نمی‌خورد و در مرحله‌ی
-    reprice با هزینه‌ی فارکس جایگزین می‌شود.
-    موتور پشته در مخزن توسعه (improvement_runs) است، نه داخل پکیج؛ اگر
-    در دسترس نبود خطای روشن می‌دهد (مسیرهای زنده به این تابع وابسته
-    نیستند).
+    Method: the stack engine's _simulate_trade is replaced during evaluation
+    with a wrapper that keeps the original signature exactly and only records
+    (exit price, entry, risk, direction) of each simulation based on (entry
+    index, max_hold); after the evaluation, the raw values are merged into the
+    records. The engine's own computation (including the temporary crypto R)
+    is untouched and is replaced in the reprice step with the forex cost.
+    The stack engine lives in the development repo (improvement_runs), not
+    inside the package; if it is not available it raises a clear error (live
+    paths do not depend on this function).
     """
     if _IMPROVEMENT not in sys.path:
         sys.path.insert(0, _IMPROVEMENT)

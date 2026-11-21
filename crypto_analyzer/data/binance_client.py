@@ -1,14 +1,15 @@
 """
 data/binance_client.py
-کلاینت گرفتن داده‌ی کندل از اندپوینت عمومی بازار بایننس (Binance Public Market Data).
+Client for fetching candle data from Binance's public market endpoint (Binance Public Market Data).
 
-نکته‌های مهم:
-- برای دیتای عمومی کندل هیچ API key لازم نیست و هیچ جا هم درخواست نمی‌شود.
-- دامنه‌ی اصلی data-api.binance.vision است (مخصوص دیتای عمومی)؛ api.binance.com
-  در بعضی مناطق خطای 451 می‌دهد، پس فقط fallback است.
-- صفحه‌بندی (pagination) با endTime به عقب انجام می‌شود: هر صفحه حداکثر ۱۰۰۰ کندل.
-- روی خطای 400 (مثل نماد ناموجود) تلاش مجدد نمی‌شود چون خطا قطعی است؛ پیام واقعی
-  بایننس خوانده و به فارسی برگردانده می‌شود (رفع مشکل ممیزی شماره‌ی ۵).
+Important points:
+- No API key is needed for public candle data, and none is requested anywhere.
+- The main domain is data-api.binance.vision (dedicated to public data); api.binance.com
+  returns error 451 in some regions, so it is only a fallback.
+- Pagination is done backwards with endTime: each page at most 1000 candles.
+- On error 400 (e.g. a nonexistent symbol) there is no retry because the error is
+  definitive; Binance's real message is read and returned in Persian (fix for audit
+  issue no. 5).
 """
 
 import time
@@ -23,7 +24,7 @@ import config
 
 
 class BinanceError(Exception):
-    """خطای مربوط به ارتباط یا پاسخ بایننس."""
+    """Error related to the connection or Binance's response."""
     pass
 
 
@@ -41,9 +42,9 @@ class BinanceClient:
     @staticmethod
     def normalize_symbol(symbol_usdt: str) -> str:
         """
-        ورودی‌های مختلف را به نماد استاندارد بایننس تبدیل می‌کند:
+        Converts various inputs to the standard Binance symbol:
         "BTC" -> "BTCUSDT" | "btc" -> "BTCUSDT" | "BTCUSDT" -> "BTCUSDT"
-        "BTC/USDT" -> "BTCUSDT" | "BTC/USDT" با فاصله/حروف کوچک هم درست می‌شود.
+        "BTC/USDT" -> "BTCUSDT" | "BTC/USDT" with spaces/lowercase also works.
         """
         s = str(symbol_usdt).strip().upper().replace("/", "").replace("-", "").replace(" ", "")
         if not s:
@@ -56,7 +57,7 @@ class BinanceClient:
     # Internal helpers
     # ------------------------------------------------------------------
     def _raise_for_binance_error(self, response, symbol: str):
-        """پیام خطای واقعی بایننس را می‌خواند و خطای فارسی واضح می‌سازد (بدون retry)."""
+        """Reads Binance's real error message and builds a clear Persian error (without retry)."""
         code = None
         msg = ""
         try:
@@ -76,7 +77,7 @@ class BinanceClient:
 
     def _get_klines_page(self, symbol: str, interval: str, limit: int,
                          end_time: int = None) -> list:
-        """یک صفحه کندل می‌گیرد. روی 429/5xx و خطای شبکه retry می‌کند، روی 400 نه."""
+        """Fetches one page of candles. Retries on 429/5xx and network errors, not on 400."""
         params = {"symbol": symbol, "interval": interval, "limit": limit}
         if end_time is not None:
             params["endTime"] = end_time
@@ -94,16 +95,16 @@ class BinanceClient:
                 if response.status_code == 200:
                     return response.json()
                 if response.status_code == 400:
-                    # خطای قطعی (نماد/بازه‌ی نامعتبر) — تلاش مجدد بی‌فایده است
+                    # Definitive error (invalid symbol/interval) — retrying is useless
                     self._raise_for_binance_error(response, symbol)
                 if response.status_code in (429, 500, 502, 503, 504):
                     last_error = BinanceError(
                         f"HTTP {response.status_code} از {base}")
                     continue
-                # بقیه‌ی کدها (مثل 451 محدودیت منطقه‌ای) — دامنه‌ی بعدی را امتحان کن
+                # Other codes (e.g. 451 regional restriction) — try the next domain
                 last_error = BinanceError(f"HTTP {response.status_code} از {base}")
             if attempt < self.max_retries:
-                time.sleep(attempt)  # backoff ساده: ۱ ثانیه، ۲ ثانیه
+                time.sleep(attempt)  # Simple backoff: 1 second, 2 seconds
         raise BinanceError(f"اتصال به بایننس ناموفق بود: {last_error}")
 
     # ------------------------------------------------------------------
@@ -111,8 +112,8 @@ class BinanceClient:
     # ------------------------------------------------------------------
     def get_candles(self, symbol_usdt: str, interval: str, total_candles: int) -> list:
         """
-        تعداد total_candles کندل آخر نماد را با صفحه‌بندی به عقب جمع می‌کند.
-        خروجی: لیست صعودیِ (قدیمی به جدید) دیکشنری‌های
+        Collects a total of total_candles of the symbol's last candles, paging backwards.
+        Output: an ascending list (old to new) of dicts
         {timestamp(ms), datetime(tz UTC), open, high, low, close, volume}
         """
         symbol = self.normalize_symbol(symbol_usdt)
@@ -125,12 +126,12 @@ class BinanceClient:
             page = self._get_klines_page(symbol, interval, limit, end_time)
             if not page:
                 break
-            collected = page + collected  # صفحات قدیمی‌تر به ابتدای لیست می‌آیند
-            end_time = int(page[0][0]) - 1  # یک میلی‌ثانیه قبل از قدیمی‌ترین کندل این صفحه
+            collected = page + collected  # Older pages come to the beginning of the list
+            end_time = int(page[0][0]) - 1  # One millisecond before the oldest candle of this page
             if len(page) < limit:
-                break  # به ابتدای تاریخچه‌ی نماد رسیدیم
+                break  # We have reached the beginning of the symbol's history
 
-        # مرتب‌سازی و حذف تکراری‌های احتمالی بر اساس timestamp، نگه داشتن آخرین‌ها
+        # Sorting and removing possible duplicates by timestamp, keeping the last ones
         by_ts = {int(row[0]): row for row in collected}
         rows = [by_ts[ts] for ts in sorted(by_ts)][-total_candles:]
 

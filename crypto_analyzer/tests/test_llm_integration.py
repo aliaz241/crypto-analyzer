@@ -1,25 +1,25 @@
 #!/usr/bin/env python3
 """
 tests/test_llm_integration.py
-تست آفلاین یکپارچه‌سازی لایه‌ی LLM با اسکنر — بدون اینترنت، با کلاینت جعلی:
+Offline test of the LLM layer's integration with the scanner — no internet, with a fake client:
 
     python tests/test_llm_integration.py
 
-پوشش:
-۱) لایه خاموش (پیش‌فرض): خروجی scan_market عیناً برابر با یک دیکشنری
-   مبنای گرفته‌شده بدون لایه — دیپ‌کامپر کامل (بدون کلید llm /
-   llm_summary، بدون تغییر هیچ فیلدی). داده از کندل مصنوعی sample_data
-   و فچ جایگزین‌شده با کش می‌آید و EV از کش واقعی پکیج خوانده می‌شود
-   (BTC/ETH روی این داده NO_TRADE می‌گیرند).
-۲) لایه روشن با کلاینت جعلی روی attach مستقیم: نامزد WAIT (از دروازه‌ی
-   EV رد شده) کلید "llm" می‌گیرد و NO_TRADE هرگز به کلاینت نمی‌رسد
-   (شمارش فراخوانی = ۰). مسیر scan_market با llm=True روی نامزدهای این
-   داده همه NO_TRADE‌اند، پس ۰ فراخوانی و llm_summary تحلیلی صفر دارد.
-۳) سقف LLM_SCAN_TOP_K روی مسیر داخلی _attach_llm_to_scan: از ۵ نامزد
-   غیر NO_TRADE دقیقاً ۳ تا بازبینی می‌شوند.
-۴) کلاینت جعلیِ خطادار: خروجی اسکن کاملاً بدون تغییر می‌ماند (نامزد
-   fail-safe WAIT می‌گیرد یا دست‌نخورده می‌ماند، ولی فیلدهای قبلی‌اش
-   عوض نمی‌شوند).
+Coverage:
+1) Layer off (default): scan_market output exactly equals a baseline dict
+   taken without the layer — a full deep-compare (no llm / llm_summary keys,
+   no field changed). Data comes from sample_data synthetic candles and a
+   cache-replaced fetch, and EV is read from the package's real cache
+   (BTC/ETH take NO_TRADE on this data).
+2) Layer on with a fake client on direct attach: a WAIT candidate (passed
+   the EV gate) gets the "llm" key and NO_TRADE never reaches the client
+   (call count = 0). The scan_market path with llm=True on this data's
+   candidates are all NO_TRADE, so 0 calls and llm_summary has zero analysis.
+3) The LLM_SCAN_TOP_K cap on the internal _attach_llm_to_scan path: of 5
+   non-NO_TRADE candidates, exactly 3 are reviewed.
+4) An erroring fake client: the scan output stays completely unchanged (the
+   candidate gets a fail-safe WAIT or stays untouched, but its previous
+   fields do not change).
 """
 
 import copy
@@ -45,7 +45,7 @@ def check(name, cond, detail=""):
 
 
 class FakeClient:
-    """کلاینت جعلی صف‌محور — همان قرارداد FakeClient در test_llm_layer."""
+    """Queue-based fake client — the same FakeClient contract as in test_llm_layer."""
 
     def __init__(self, queues):
         self.queues = {m: list(v) for m, v in queues.items()}
@@ -73,8 +73,8 @@ C = llm_engine.LLM_CROSSCHECK_MODEL
 
 
 def make_content(cand, decision="BUY", confidence=70):
-    """خروجی معتبر مدل برای همین نامزد (اعدادش از خود نامزد کپی می‌شود
-    تا اعتبارسنجی عددی موتور رد شود)."""
+    """A valid model output for this same candidate (its numbers are copied from the
+    candidate itself so the engine's numeric validation passes)."""
     ev = cand.get("ev") or {}
     return json.dumps({
         "decision": decision,
@@ -96,9 +96,9 @@ def make_content(cand, decision="BUY", confidence=70):
 
 
 def make_wait_candidate(symbol="XRP", timeframe="4h"):
-    """نامزد WAIT هم‌قالب خروجی اسکنر + attach_ev_decision (داده‌ی EV واقعی
-    این ترکیب از ماتریس نهایی: ‎+0.3666R، n=12 — در test_llm_layer هم
-    همین شکل استفاده شده)."""
+    """A WAIT candidate in the same shape as the scanner output + attach_ev_decision (this
+    combination's real EV data from the final matrix: +0.3666R, n=12 — the same
+    shape is used in test_llm_layer too)."""
     return {
         "symbol": symbol, "timeframe": timeframe, "direction": "long",
         "direction_fa": "لانگ (خرید)", "score": 72.0,
@@ -127,8 +127,8 @@ def make_no_trade_candidate():
 
 
 # ---------------------------------------------------------------------------
-# فچ آفلاین: کندل مصنوعی ثابت برای هر چهار ترکیب رگرسیون (seed جدا ولی
-# deterministic) تا scan_market بدون شبکه روی همان مسیر واقعی بچرخد.
+# Offline fetch: a fixed synthetic candle for all four regression combinations (separate seed but
+# deterministic) so scan_market runs on the same real path without a network.
 # ---------------------------------------------------------------------------
 _DFS = {}
 for _sym, _seed in (("BTC", 42), ("ETH", 43)):
@@ -145,7 +145,7 @@ def _fake_fetch(symbol, timeframe, *args, **kwargs):
 _orig_fetch = analyzer_mod.fetch_candles_binance
 scanner.analyzer.fetch_candles_binance = _fake_fetch
 try:
-    # --- ۱) خاموش = دیپ‌کامپر با مبنا ----------------------------------
+    # --- 1) Off = deep-compare with the baseline ---
     base = scanner.scan_market(["BTC", "ETH"], ["4h", "1d"], 5,
                                progress=False)
     baseline = copy.deepcopy(base)
@@ -156,7 +156,7 @@ try:
     check("خاموش: دو اجرای پشت‌سرهم دقیقاً برابرند (deterministic)",
           again == baseline)
 
-    # --- ۲) روشن ولی بدون کلید و بدون کلاینت: خلاصه‌ی غیرفعال ----------
+    # --- 2) On but no key and no client: disabled summary ---
     no_key = scanner.scan_market(["BTC", "ETH"], ["4h", "1d"], 5,
                                  progress=False, llm=True)
     check("روشنِ بدون کلید: llm_summary غیرفعال با دلیل no_api_key",
@@ -169,9 +169,9 @@ try:
     check("روشنِ بدون کلید: هیچ نامزدی کلید llm نگرفته",
           all("llm" not in c for c in no_key["candidates"]))
 
-    # --- ۳) روشن با کلاینت جعلی روی همین داده: همه NO_TRADE -----------
-    # (BTC/ETH مصنوعی روی کش واقعی EV تصمیم NO_TRADE می‌گیرند، پس موتور
-    #  نباید حتی یک بار صدا زده شود و کسی کلید llm نمی‌گیرد.)
+    # --- 3) On with a fake client on the same data: all NO_TRADE ---
+    # (synthetic BTC/ETH take a NO_TRADE decision on the real EV cache, so the engine
+    #  must not be called even once and nobody gets an llm key.)
     fake_idle = FakeClient({P: [], C: []})
     with_fake = scanner.scan_market(["BTC", "ETH"], ["4h", "1d"], 5,
                                     progress=False, llm=True,
@@ -186,7 +186,7 @@ try:
     check("داده‌ی NO_TRADE: بقیه‌ی خروجی دقیقاً برابر مبناست",
           stripped2 == baseline)
 
-    # --- ۴) attach مستقیم: WAIT می‌گیرد، NO_TRADE هرگز نمی‌رسد --------
+    # --- 4) Direct attach: gets WAIT, NO_TRADE never arrives ---
     wait_cand = make_wait_candidate()
     content = make_content(wait_cand, "BUY")
     fake1 = FakeClient({P: [content] * 3, C: [content]})
@@ -204,7 +204,7 @@ try:
     check("attach روی NO_TRADE: صفر فراخوانی (کف سخت)",
           fake2.call_count() == 0)
 
-    # --- ۵) سقف ۳ روی _attach_llm_to_scan ------------------------------
+    # --- 5) Cap of 3 on _attach_llm_to_scan ---
     five = [make_wait_candidate(symbol=f"S{i}") for i in range(5)]
     queues = {P: [], C: []}
     for c in five[:3]:
@@ -220,7 +220,7 @@ try:
           fake_out["llm_summary"]["analyzed"] == 3
           and fake_out["llm_summary"]["decisions"] == {"BUY": 3})
 
-    # --- ۶) کلاینت خطادار: فیلدهای قبلی نامزد دست نمی‌خورند ------------
+    # --- 6) Erroring client: the candidate's previous fields are untouched ---
     boom = llm_client.LLMError("شبکه قطع است")
     fake4 = FakeClient({P: [boom] * 3, C: [make_content(wait_cand)]})
     orig = make_wait_candidate()
@@ -241,7 +241,7 @@ try:
     check("استثنای غیرمنتظره‌ی کلاینت: attach برمی‌گردد و نمی‌ترکد",
           isinstance(out_err2, dict))
 
-    # --- ۷) llm_layer_active پیش‌فرض خاموش ------------------------------
+    # --- 7) llm_layer_active off by default ---
     check("llm_layer_active() پیش‌فرض False است",
           scanner.llm_layer_active() is False)
 finally:

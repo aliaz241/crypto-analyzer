@@ -1,12 +1,13 @@
 """
 patterns/candlestick.py
-تشخیص الگوهای کندل‌استیک (کندل‌شناسی).
+Detecting candlestick patterns (candle reading).
 
-هر تابع یک pandas.Series بولی هم‌تراز با ایندکس df برمی‌گرداند:
-True در اندیسی که الگو در آن کندل (یا کندل پایانی الگوهای چندکندلی) تکمیل شده.
+Each function returns a boolean pandas.Series aligned with the df index:
+True at the index where the pattern completed in that candle (or the final
+candle of multi-candle patterns).
 
-این پیاده‌سازی مستقل است (وابسته به TA-Lib نیست) تا در محیط‌هایی مثل Termux
-یا ویندوز ۳۲بیتی بدون نیاز به کامپایل کتابخانه‌ی C کار کند.
+This implementation is independent (not dependent on TA-Lib) so it works in
+environments like Termux or 32-bit Windows without needing to compile a C library.
 """
 
 import numpy as np
@@ -38,13 +39,14 @@ def _candle_metrics(df: pd.DataFrame) -> pd.DataFrame:
 def _prior_trend(df: pd.DataFrame, lookback: int = 5, threshold_pct: float = 1.0,
                   shift_from: int = 1) -> pd.Series:
     """
-    روند را قبل از شروع الگو تخمین می‌زند: close در 'shift_from' کندل قبل از
-    کندل جاری را با close در 'shift_from + lookback' کندل قبل مقایسه می‌کند.
-    برای الگوهای تک‌کندلی shift_from=1 (پیش‌فرض) درست است؛ برای الگوهای
-    چندکندلی (مثل Tweezer که دو کندل را در بر می‌گیرد) باید shift_from را
-    به تعداد کندل‌های الگو افزایش داد تا روند قبل از *کل* الگو سنجیده شود،
-    نه قبل از آخرین کندلش.
-    خروجی: سری رشته‌ای با مقادیر 'up', 'down', 'flat'
+    Estimates the trend before the pattern starts: compares the close at
+    'shift_from' candles before the current candle with the close at
+    'shift_from + lookback' candles before. For single-candle patterns
+    shift_from=1 (default) is right; for multi-candle patterns (like Tweezer,
+    which spans two candles) shift_from must be increased by the number of
+    the pattern's candles so the trend is measured before the *whole* pattern,
+    not before its last candle.
+    Output: a string series with values 'up', 'down', 'flat'
     """
     reference = df["close"].shift(shift_from)
     past = df["close"].shift(shift_from + lookback)
@@ -60,13 +62,13 @@ def _prior_trend(df: pd.DataFrame, lookback: int = 5, threshold_pct: float = 1.0
 # Single-candle patterns
 # ---------------------------------------------------------------------------
 def doji(df: pd.DataFrame) -> pd.Series:
-    """بدنه‌ی بسیار کوچک نسبت به کل رنج — نشانه‌ی تردید بازار."""
+    """A very small body relative to the whole range — a sign of market indecision."""
     m = _candle_metrics(df)
     return m["body_pct"] <= 0.07
 
 
 def hammer(df: pd.DataFrame) -> pd.Series:
-    """بدنه‌ی کوچک بالای رنج + سایه‌ی پایین بلند، بعد از روند نزولی = برگشت صعودی."""
+    """A small body at the top of the range + a long lower shadow, after a downtrend = bullish reversal."""
     m = _candle_metrics(df)
     trend = _prior_trend(df)
     shape = (
@@ -78,7 +80,7 @@ def hammer(df: pd.DataFrame) -> pd.Series:
 
 
 def hanging_man(df: pd.DataFrame) -> pd.Series:
-    """همان شکل چکش ولی بعد از روند صعودی = هشدار برگشت نزولی."""
+    """The same hammer shape but after an uptrend = bearish reversal warning."""
     m = _candle_metrics(df)
     trend = _prior_trend(df)
     shape = (
@@ -90,7 +92,7 @@ def hanging_man(df: pd.DataFrame) -> pd.Series:
 
 
 def inverted_hammer(df: pd.DataFrame) -> pd.Series:
-    """بدنه‌ی کوچک پایین رنج + سایه‌ی بالا بلند، بعد از نزول = احتمال برگشت صعودی."""
+    """A small body at the bottom of the range + a long upper shadow, after a decline = probable bullish reversal."""
     m = _candle_metrics(df)
     trend = _prior_trend(df)
     shape = (
@@ -102,7 +104,7 @@ def inverted_hammer(df: pd.DataFrame) -> pd.Series:
 
 
 def shooting_star(df: pd.DataFrame) -> pd.Series:
-    """همان شکل بالا ولی بعد از روند صعودی = هشدار برگشت نزولی."""
+    """The same shape as above but after an uptrend = bearish reversal warning."""
     m = _candle_metrics(df)
     trend = _prior_trend(df)
     shape = (
@@ -114,19 +116,19 @@ def shooting_star(df: pd.DataFrame) -> pd.Series:
 
 
 def bullish_marubozu(df: pd.DataFrame) -> pd.Series:
-    """کندل صعودی توپر بدون سایه — فشار خرید قوی و یکطرفه."""
+    """A solid bullish candle with no shadow — strong, one-sided buying pressure."""
     m = _candle_metrics(df)
     return m["is_bullish"] & (m["body_pct"] >= 0.95)
 
 
 def bearish_marubozu(df: pd.DataFrame) -> pd.Series:
-    """کندل نزولی توپر بدون سایه — فشار فروش قوی و یکطرفه."""
+    """A solid bearish candle with no shadow — strong, one-sided selling pressure."""
     m = _candle_metrics(df)
     return m["is_bearish"] & (m["body_pct"] >= 0.95)
 
 
 def spinning_top(df: pd.DataFrame) -> pd.Series:
-    """بدنه‌ی کوچک با سایه‌های بالا و پایین تقریباً مساوی — سردرگمی بازار."""
+    """A small body with roughly equal upper and lower shadows — market confusion."""
     m = _candle_metrics(df)
     shadow_balance = (m["upper_shadow"] - m["lower_shadow"]).abs() <= (m["range"] * 0.15)
     return (m["body_pct"] <= 0.3) & (m["body_pct"] > 0.07) & shadow_balance
@@ -136,7 +138,7 @@ def spinning_top(df: pd.DataFrame) -> pd.Series:
 # Two-candle patterns
 # ---------------------------------------------------------------------------
 def bullish_engulfing(df: pd.DataFrame) -> pd.Series:
-    """کندل صعودی بدنه‌ی کندل نزولی قبلی را کامل می‌بلعد — برگشت صعودی قوی."""
+    """A bullish candle completely engulfs the previous bearish candle's body — strong bullish reversal."""
     m = _candle_metrics(df)
     prev_bearish = m["is_bearish"].shift(1)
     curr_bullish = m["is_bullish"]
@@ -145,7 +147,7 @@ def bullish_engulfing(df: pd.DataFrame) -> pd.Series:
 
 
 def bearish_engulfing(df: pd.DataFrame) -> pd.Series:
-    """کندل نزولی بدنه‌ی کندل صعودی قبلی را کامل می‌بلعد — برگشت نزولی قوی."""
+    """A bearish candle completely engulfs the previous bullish candle's body — strong bearish reversal."""
     m = _candle_metrics(df)
     prev_bullish = m["is_bullish"].shift(1)
     curr_bearish = m["is_bearish"]
@@ -154,7 +156,7 @@ def bearish_engulfing(df: pd.DataFrame) -> pd.Series:
 
 
 def bullish_harami(df: pd.DataFrame) -> pd.Series:
-    """کندل نزولی بزرگ و بعد یک کندل صعودی کوچک داخل بدنه‌ی آن — کاهش فشار فروش."""
+    """A large bearish candle then a small bullish candle inside its body — decreasing selling pressure."""
     m = _candle_metrics(df)
     prev_bearish = m["is_bearish"].shift(1)
     curr_bullish = m["is_bullish"]
@@ -163,7 +165,7 @@ def bullish_harami(df: pd.DataFrame) -> pd.Series:
 
 
 def bearish_harami(df: pd.DataFrame) -> pd.Series:
-    """کندل صعودی بزرگ و بعد یک کندل نزولی کوچک داخل بدنه‌ی آن — کاهش فشار خرید."""
+    """A large bullish candle then a small bearish candle inside its body — decreasing buying pressure."""
     m = _candle_metrics(df)
     prev_bullish = m["is_bullish"].shift(1)
     curr_bearish = m["is_bearish"]
@@ -173,10 +175,11 @@ def bearish_harami(df: pd.DataFrame) -> pd.Series:
 
 def piercing_line(df: pd.DataFrame) -> pd.Series:
     """
-    کندل صعودی که بیش از نیمی از بدنه‌ی نزولی قبلی را پوشش می‌دهد — برگشت صعودی.
-    تعریف کلاسیک این الگو gap-down واقعی بین دو کندل می‌خواهد، ولی چون کریپتو
-    ۲۴/۷ معامله می‌شود و gap واقعی نادر است، شرط به «باز شدن در سطح یا پایین‌تر
-    از close قبلی» نرم شده — ویژگی اصلی الگو (نفوذ عمیق به بدنه‌ی قبلی) حفظ شده.
+    A bullish candle that covers more than half of the previous bearish body — bullish reversal.
+    The classic definition of this pattern wants a real gap-down between the
+    two candles, but since crypto trades 24/7 and a real gap is rare, the
+    condition is softened to "opening at or below the previous close" — the
+    pattern's main feature (deep penetration into the previous body) is preserved.
     """
     m = _candle_metrics(df)
     prev_bearish = m["is_bearish"].shift(1)
@@ -190,9 +193,9 @@ def piercing_line(df: pd.DataFrame) -> pd.Series:
 
 def dark_cloud_cover(df: pd.DataFrame) -> pd.Series:
     """
-    کندل نزولی که بیش از نیمی از بدنه‌ی صعودی قبلی را می‌پوشاند — برگشت نزولی.
-    مشابه piercing_line، شرط gap به «باز شدن در سطح یا بالاتر از close قبلی»
-    نرم شده تا در بازار بدون gap هم قابل تشخیص باشد.
+    A bearish candle that covers more than half of the previous bullish body — bearish reversal.
+    Like piercing_line, the gap condition is softened to "opening at or above
+    the previous close" so it is detectable in a gapless market too.
     """
     m = _candle_metrics(df)
     prev_bullish = m["is_bullish"].shift(1)
@@ -205,16 +208,16 @@ def dark_cloud_cover(df: pd.DataFrame) -> pd.Series:
 
 
 def tweezer_top(df: pd.DataFrame) -> pd.Series:
-    """دو کندل با سقف تقریباً برابر بعد از روند صعودی — مقاومت دوبار تست شده."""
+    """Two candles with roughly equal highs after an uptrend — resistance tested twice."""
     m = _candle_metrics(df)
-    # shift_from=2 چون این الگو دو کندل دارد؛ روند باید قبل از هر دو سنجیده شود
+    # shift_from=2 because this pattern has two candles; the trend must be measured before both
     trend = _prior_trend(df, lookback=6, shift_from=2)
     high_diff_pct = (df["high"] - df["high"].shift(1)).abs() / df["high"].shift(1) * 100
     return (high_diff_pct <= 0.3) & (trend == "up") & m["is_bearish"]
 
 
 def tweezer_bottom(df: pd.DataFrame) -> pd.Series:
-    """دو کندل با کف تقریباً برابر بعد از روند نزولی — حمایت دوبار تست شده."""
+    """Two candles with roughly equal lows after a downtrend — support tested twice."""
     m = _candle_metrics(df)
     trend = _prior_trend(df, lookback=6, shift_from=2)
     low_diff_pct = (df["low"] - df["low"].shift(1)).abs() / df["low"].shift(1) * 100
@@ -226,10 +229,11 @@ def tweezer_bottom(df: pd.DataFrame) -> pd.Series:
 # ---------------------------------------------------------------------------
 def morning_star(df: pd.DataFrame) -> pd.Series:
     """
-    نزولی بزرگ + کندل کوچک (تردید) + صعودی بزرگ — برگشت صعودی سه‌کندلی.
-    به‌جای gap واقعی بین کندل اول و دوم (نادر در بازار ۲۴/۷)، شرط «بدنه‌ی
-    کندل دوم پایین‌تر از نیمه‌ی بدنه‌ی کندل اول باشد» استفاده شده — جوهر
-    اصلی الگو (مکث/تردید نزدیک کف حرکت نزولی) را بدون نیاز به gap می‌گیرد.
+    Large bearish + a small candle (indecision) + large bullish — a three-candle bullish reversal.
+    Instead of a real gap between the first and second candles (rare in a 24/7
+    market), the condition "the second candle's body is below the midpoint of
+    the first candle's body" is used — it captures the pattern's main essence
+    (a pause/indecision near the low of the bearish move) without needing a gap.
     """
     m = _candle_metrics(df)
     first_bearish = m["is_bearish"].shift(2)
@@ -246,9 +250,9 @@ def morning_star(df: pd.DataFrame) -> pd.Series:
 
 def evening_star(df: pd.DataFrame) -> pd.Series:
     """
-    صعودی بزرگ + کندل کوچک (تردید) + نزولی بزرگ — برگشت نزولی سه‌کندلی.
-    مشابه morning_star، به‌جای gap واقعی، «بدنه‌ی کندل دوم بالاتر از نیمه‌ی
-    بدنه‌ی کندل اول» به عنوان معیار استفاده شده.
+    Large bullish + a small candle (indecision) + large bearish — a three-candle bearish reversal.
+    Like morning_star, instead of a real gap, "the second candle's body is
+    above the midpoint of the first candle's body" is used as the criterion.
     """
     m = _candle_metrics(df)
     first_bullish = m["is_bullish"].shift(2)
@@ -264,7 +268,7 @@ def evening_star(df: pd.DataFrame) -> pd.Series:
 
 
 def three_white_soldiers(df: pd.DataFrame) -> pd.Series:
-    """سه کندل صعودی پیاپی، هرکدام با close بالاتر از قبلی — روند صعودی قوی."""
+    """Three consecutive bullish candles, each closing higher than the previous — a strong uptrend."""
     m = _candle_metrics(df)
     all_bullish = m["is_bullish"] & m["is_bullish"].shift(1) & m["is_bullish"].shift(2)
     progressive_close = (df["close"] > df["close"].shift(1)) & (df["close"].shift(1) > df["close"].shift(2))
@@ -273,7 +277,7 @@ def three_white_soldiers(df: pd.DataFrame) -> pd.Series:
 
 
 def three_black_crows(df: pd.DataFrame) -> pd.Series:
-    """سه کندل نزولی پیاپی، هرکدام با close پایین‌تر از قبلی — روند نزولی قوی."""
+    """Three consecutive bearish candles, each closing lower than the previous — a strong downtrend."""
     m = _candle_metrics(df)
     all_bearish = m["is_bearish"] & m["is_bearish"].shift(1) & m["is_bearish"].shift(2)
     progressive_close = (df["close"] < df["close"].shift(1)) & (df["close"].shift(1) < df["close"].shift(2))
@@ -283,10 +287,10 @@ def three_black_crows(df: pd.DataFrame) -> pd.Series:
 
 def three_inside_up(df: pd.DataFrame) -> pd.Series:
     """
-    Bullish Harami + یک کندل صعودی تأییدی که بالاتر از open کندل اول (نه فقط
-    close آن) بسته شود — این آستانه‌ی استاندارد تأیید الگو است؛ مقایسه با
-    close کندل اول (که برای کندل نزولی پایین‌تر از open است) آستانه را
-    بیش از حد ساده می‌کرد.
+    Bullish Harami + a confirming bullish candle that closes above the first
+    candle's open (not just its close) — this is the pattern's standard
+    confirmation threshold; comparing with the first candle's close (which for
+    a bearish candle is below its open) made the threshold too easy.
     """
     har = bullish_harami(df).shift(1).fillna(False)
     m = _candle_metrics(df)
@@ -295,7 +299,7 @@ def three_inside_up(df: pd.DataFrame) -> pd.Series:
 
 
 def three_inside_down(df: pd.DataFrame) -> pd.Series:
-    """Bearish Harami + یک کندل نزولی تأییدی که پایین‌تر از open کندل اول بسته شود."""
+    """Bearish Harami + a confirming bearish candle that closes below the first candle's open."""
     har = bearish_harami(df).shift(1).fillna(False)
     m = _candle_metrics(df)
     confirmation = m["is_bearish"] & (df["close"] < df["open"].shift(2))
@@ -333,8 +337,8 @@ PATTERN_REGISTRY = {
 
 def detect_all(df: pd.DataFrame) -> pd.DataFrame:
     """
-    همه‌ی الگوهای کندلی را روی کل تاریخچه اجرا می‌کند.
-    خروجی: DataFrame بولی هم‌اندازه‌ی df، یک ستون به ازای هر الگو.
+    Runs all candlestick patterns over the whole history.
+    Output: a boolean DataFrame the same size as df, one column per pattern.
     """
     results = {}
     for name, info in PATTERN_REGISTRY.items():
@@ -347,8 +351,8 @@ def detect_all(df: pd.DataFrame) -> pd.DataFrame:
 
 def detect_latest(df: pd.DataFrame, n_candles: int = 1) -> list:
     """
-    الگوهایی که در 'n_candles' کندل آخر فعال شده‌اند را برمی‌گرداند.
-    خروجی: لیستی از دیکشنری {"name": ..., "fa": ..., "bias": ..., "index": ...}
+    Returns the patterns that activated in the last 'n_candles' candles.
+    Output: a list of dicts {"name": ..., "fa": ..., "bias": ..., "index": ...}
     """
     all_patterns = detect_all(df)
     recent = all_patterns.tail(n_candles)

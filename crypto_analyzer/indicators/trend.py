@@ -1,8 +1,8 @@
 """
 indicators/trend.py
-اندیکاتورهای روند: SMA, EMA, MACD, ADX
-همه توابع یک pandas.DataFrame با ستون‌های open/high/low/close/volume می‌گیرند
-و یک pandas.Series (یا DataFrame چندستونی) هم‌تراز با ایندکس ورودی برمی‌گردانند.
+Trend indicators: SMA, EMA, MACD, ADX
+All functions take a pandas.DataFrame with columns open/high/low/close/volume
+and return a pandas.Series (or a multi-column DataFrame) aligned with the input index.
 """
 
 import numpy as np
@@ -12,20 +12,20 @@ from .volatility import true_range as _true_range
 
 
 def sma(df: pd.DataFrame, period: int = 20, column: str = "close") -> pd.Series:
-    """میانگین متحرک ساده."""
+    """Simple moving average."""
     return df[column].rolling(window=period, min_periods=period).mean()
 
 
 def ema(df: pd.DataFrame, period: int = 20, column: str = "close") -> pd.Series:
-    """میانگین متحرک نمایی."""
+    """Exponential moving average."""
     return df[column].ewm(span=period, adjust=False, min_periods=period).mean()
 
 
 def macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9,
           column: str = "close") -> pd.DataFrame:
     """
-    MACD کلاسیک.
-    خروجی: DataFrame با ستون‌های macd, signal, histogram
+    Classic MACD.
+    Output: a DataFrame with columns macd, signal, histogram
     """
     ema_fast = df[column].ewm(span=fast, adjust=False, min_periods=fast).mean()
     ema_slow = df[column].ewm(span=slow, adjust=False, min_periods=slow).mean()
@@ -41,9 +41,9 @@ def macd(df: pd.DataFrame, fast: int = 12, slow: int = 26, signal: int = 9,
 
 def adx(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     """
-    Average Directional Index — قدرت روند (بدون جهت).
-    خروجی: DataFrame با ستون‌های adx, plus_di, minus_di
-    adx بالای 25 یعنی روند قوی؛ زیر 20 یعنی بازار رنج/بدون روند مشخص.
+    Average Directional Index — trend strength (without direction).
+    Output: a DataFrame with columns adx, plus_di, minus_di
+    adx above 25 means a strong trend; below 20 means a ranging/no-clear-trend market.
     """
     up_move = df["high"].diff()
     down_move = -df["low"].diff()

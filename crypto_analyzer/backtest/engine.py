@@ -1,13 +1,14 @@
 """
 backtest/engine.py
-بک‌تست الگوها روی داده‌ی تاریخی.
+Backtest of patterns on historical data.
 
-برای هر رخداد تاریخی یک الگو، بررسی می‌شود که قیمت ابتدا به «هدف» رسیده
-(موفق / win) یا ابتدا سطح «بطلان الگو» را لمس کرده (ناموفق / loss) یا در بازه‌ی
-زمانی مشخص هیچ‌کدام رخ نداده (timeout). نرخ موفقیت نهایی = wins / total.
+For each historical occurrence of a pattern, it is checked whether the price
+reached the "target" first (success / win), touched the "pattern invalidation"
+level first (failure / loss), or neither happened within the specified time
+window (timeout). Final success rate = wins / total.
 
-⚠️ این یک آمار تاریخی از عملکرد گذشته‌ی الگو روی همین دارایی/تایم‌فریم است،
-نه تضمینی برای آینده. رفتار بازار می‌تواند تغییر کند.
+⚠️ This is a historical statistic of the pattern's past performance on this
+asset/timeframe, not a guarantee for the future. Market behavior can change.
 """
 
 import pandas as pd
@@ -23,8 +24,8 @@ from patterns import candlestick, chart_patterns
 def _simulate_forward(df: pd.DataFrame, start_pos: int, target: float,
                        invalidation: float, direction: str, max_candles: int) -> str:
     """
-    از کندل بعد از start_pos تا حداکثر max_candles کندل جلو می‌رود.
-    خروجی: 'win' | 'loss' | 'timeout'
+    Moves forward from the candle after start_pos up to max_candles candles.
+    Output: 'win' | 'loss' | 'timeout'
     """
     n = len(df)
     end_pos = min(start_pos + max_candles, n - 1)
@@ -39,8 +40,8 @@ def _simulate_forward(df: pd.DataFrame, start_pos: int, target: float,
             hit_invalid = high >= invalidation
 
         if hit_target and hit_invalid:
-            # هر دو در یک کندل رخ داده — چون ترتیب داخل کندل مشخص نیست،
-            # محافظه‌کارانه فرض می‌کنیم ابتدا بطلان رخ داده (loss)
+            # Both happened in one candle — since the intra-candle order is unknown,
+            # conservatively we assume the invalidation happened first (loss)
             return "loss"
         if hit_target:
             return "win"
@@ -65,7 +66,7 @@ def _summarize(outcomes: dict, instances: list, fa: str, bias: str) -> dict:
 
 
 def backtest_candlestick_patterns(df: pd.DataFrame, forward_window: int = None) -> dict:
-    """نرخ موفقیت تاریخی هر الگوی کندلی جهت‌دار (غیر از دوجی/فرفره)."""
+    """Historical success rate of each directional candlestick pattern (except doji/spinning top)."""
     if forward_window is None:
         forward_window = config.BACKTEST_FORWARD_WINDOW_CANDLES
 
@@ -111,17 +112,17 @@ def backtest_candlestick_patterns(df: pd.DataFrame, forward_window: int = None) 
 
 def backtest_chart_patterns(df: pd.DataFrame, forward_window: int = None) -> dict:
     """
-    نرخ موفقیت تاریخی هر الگوی نموداری (بازه‌ی زمانی بلندتر چون این الگوها کندتر جواب می‌دهند).
+    Historical success rate of each chart pattern (a longer time window, since these patterns respond more slowly).
 
-    نکته‌ی مهم درباره‌ی اعتبار بک‌تست: completion_index هر الگو بر پایه‌ی یک
-    swing point تعیین می‌شود که خودش برای «تأیید شدن» به SWING_LOOKBACK_CANDLES
-    کندل بعدی نیاز داشته (چون swing high/low با نگاه‌کردن به هر دو طرف تشخیص
-    داده می‌شود). اگر شبیه‌سازی را دقیقاً از completion_index شروع کنیم، چند
-    کندل اول آن در واقع داده‌ای است که برای تأیید خود الگو «از قبل دیده شده»
-    — یعنی یک‌جور نشت اطلاعات آینده. برای جلوگیری از این، نقطه‌ی واقعی شروع
-    شبیه‌سازی را به‌اندازه‌ی SWING_LOOKBACK_CANDLES جلو می‌بریم (actionable_pos)؛
-    این دقیقاً همان لحظه‌ای است که یک معامله‌گر واقعی می‌توانست اولین‌بار این
-    الگو را تکمیل‌شده ببیند.
+    Important note about backtest validity: each pattern's completion_index is
+    based on a swing point that itself needed SWING_LOOKBACK_CANDLES following
+    candles to be "confirmed" (because swing high/low is detected by looking at
+    both sides). If we start the simulation exactly from completion_index, its
+    first few candles are actually data that was "already seen" to confirm the
+    pattern itself — a kind of future-information leak. To prevent this, we move
+    the real simulation start point forward by SWING_LOOKBACK_CANDLES
+    (actionable_pos); this is exactly the moment a real trader could first have
+    seen this pattern as completed.
     """
     if forward_window is None:
         forward_window = config.BACKTEST_FORWARD_WINDOW_CANDLES * 2
@@ -131,7 +132,7 @@ def backtest_chart_patterns(df: pd.DataFrame, forward_window: int = None) -> dic
 
     for p in all_patterns:
         raw_pos = df.index.get_loc(p["completion_index"])
-        pos = raw_pos + config.SWING_LOOKBACK_CANDLES  # نقطه‌ی واقعاً قابل‌اقدام
+        pos = raw_pos + config.SWING_LOOKBACK_CANDLES  # The truly actionable point
         if pos >= len(df) - 1:
             continue
 
@@ -153,7 +154,7 @@ def backtest_chart_patterns(df: pd.DataFrame, forward_window: int = None) -> dic
 
 
 def backtest_all(df: pd.DataFrame) -> dict:
-    """هر دو دسته (کندلی + نموداری) را بک‌تست می‌کند و یکجا برمی‌گرداند."""
+    """Backtests both categories (candlestick + chart) and returns them together."""
     return {
         "candlestick": backtest_candlestick_patterns(df),
         "chart": backtest_chart_patterns(df),

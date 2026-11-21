@@ -1,26 +1,29 @@
 """
 analysis/structure.py
-واگرایی‌ها و ساختار بازار — ماژول افزودنی (گام ۴).
+Divergences and market structure — add-on module (step 4).
 
-این ماژول هیچ‌کدام از محاسبات موجود را تغییر نمی‌دهد و build_report هم از
-آن استفاده نمی‌کند. خروجی‌اش (analyze_structure) فقط وقتی اثر دارد که
-صراحتاً به‌عنوان extras به scanner.score_candidate داده شود؛ در آن حالت
-مؤلفه‌ی «structure» (تا ±۱۰ امتیاز) به امتیاز اضافه می‌شود و مقیاس /۱۱۰
-خواهد بود. مسیر پیش‌فرض اسکنر بدون این ماژول و با مقیاس /۱۰۰ می‌ماند.
+This module changes none of the existing computations and build_report does
+not use it either. Its output (analyze_structure) only has an effect when it
+is explicitly passed as extras to scanner.score_candidate; in that case the
+"structure" component (up to ±10 points) is added to the score and the scale
+becomes /110. The scanner's default path stays without this module and with
+the /100 scale.
 
-تعریف‌ها:
-- swing high/low: نقطه‌ای که از SWING_LOOKBACK_CANDLES همسایه‌ی دو طرفش
-  بزرگ‌تر/کوچک‌تر است (همان ثابت الگوهای نموداری پروژه).
-- واگرایی معمولی RSI/MACD: بین دو swing هم‌نوع آخر قیمت؛ سقف بالاترِ قیمت
-  با سقف پایین‌ترِ اسیلاتور = bearish؛ کف پایین‌ترِ قیمت با کف بالاترِ
-  اسیلاتور = bullish. swing دوم باید در STRUCTURE_RECENT_CANDLES کندل اخیر
-  باشد، وگرنه واگرایی کهنه حساب نمی‌شود.
-- ساختار بازار: مقایسه‌ی دو swing high و دو swing low آخر (HH+HL =
-  uptrend، LH+LL = downtrend، وگرنه sideways).
-- رویداد BOS/CHoCH (ساده‌سازی مستند): بعد از تأیید آخرین swing، اولین
-  بسته‌شدن فراتر از آن سطح یک شکست است؛ هم‌جهت با ساختار = BOS و خلاف
-  ساختار = CHoCH. (ردیابی کامل رویدادهای میانی انجام نمی‌شود؛ فقط آخرین
-  سطح و اولین شکست بعد از آن.)
+Definitions:
+- swing high/low: a point that is larger/smaller than SWING_LOOKBACK_CANDLES
+  neighbors on both sides (the same constant as the project's chart patterns).
+- Regular RSI/MACD divergence: between the last two same-type swings of price;
+  a higher price high with a lower oscillator high = bearish; a lower price low
+  with a higher oscillator low = bullish. The second swing must be within the
+  last STRUCTURE_RECENT_CANDLES candles, otherwise the divergence does not
+  count as recent.
+- Market structure: comparing the last two swing highs and two swing lows
+  (HH+HL = uptrend, LH+LL = downtrend, otherwise sideways).
+- BOS/CHoCH event (documented simplification): after the last swing is
+  confirmed, the first close beyond that level is a break; in the direction of
+  the structure = BOS, against the structure = CHoCH. (Full tracking of
+  intermediate events is not done; only the last level and the first break
+  after it.)
 """
 
 import sys
@@ -35,7 +38,7 @@ from indicators import trend as trend_ind
 
 
 def _swing_indices(values, lookback: int, kind: str) -> list:
-    """ایندکس‌های swing روی یک آرایه‌ی عددی (مقایسه‌ی اکید با همسایه‌ها)."""
+    """Swing indices on a numeric array (strict comparison with neighbors)."""
     out = []
     v = np.asarray(values, dtype=float)
     for i in range(lookback, len(v) - lookback):
@@ -51,8 +54,8 @@ def _swing_indices(values, lookback: int, kind: str) -> list:
 
 def _last_divergence(price, osc, lookback: int, recent: int):
     """
-    آخرین واگرایی معمولی بین قیمت و یک اسیلاتور.
-    خروجی: "bullish" | "bearish" | None
+    The last regular divergence between price and an oscillator.
+    Output: "bullish" | "bearish" | None
     """
     n = len(price)
     highs = _swing_indices(price, lookback, "high")
@@ -71,7 +74,7 @@ def _last_divergence(price, osc, lookback: int, recent: int):
 
 
 def _market_structure(df, lookback: int):
-    """(ساختار, آخرین رویداد) — تعریف و ساده‌سازی در ابتدای فایل آمده است."""
+    """(structure, last event) — the definition and simplification are given at the top of the file."""
     highs = df["high"].to_numpy(dtype=float)
     lows = df["low"].to_numpy(dtype=float)
     closes = df["close"].to_numpy(dtype=float)
@@ -115,7 +118,7 @@ def _market_structure(df, lookback: int):
 
 def analyze_structure(df) -> dict:
     """
-    خروجی آماده‌ی پاس‌دادن به score_candidate(..., extras=...):
+    Ready output for passing to score_candidate(..., extras=...):
     {"rsi_divergence", "macd_divergence", "structure", "last_event"}
     """
     lookback = config.SWING_LOOKBACK_CANDLES

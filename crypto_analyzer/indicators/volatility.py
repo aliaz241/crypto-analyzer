@@ -1,6 +1,6 @@
 """
 indicators/volatility.py
-اندیکاتورهای نوسان: Bollinger Bands, ATR, Keltner Channel, OBV
+Volatility indicators: Bollinger Bands, ATR, Keltner Channel, OBV
 """
 
 import pandas as pd
@@ -14,7 +14,7 @@ def true_range(df: pd.DataFrame) -> pd.Series:
 
 
 def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
-    """Average True Range — معیار اصلی نوسان، پایه‌ی محاسبه‌ی حد ضرر."""
+    """Average True Range — the main volatility measure, the basis of the stop-loss calculation."""
     tr = true_range(df)
     return tr.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
 
@@ -22,8 +22,8 @@ def atr(df: pd.DataFrame, period: int = 14) -> pd.Series:
 def bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0,
                      column: str = "close") -> pd.DataFrame:
     """
-    باند بولینگر.
-    خروجی: DataFrame با ستون‌های middle, upper, lower, bandwidth
+    Bollinger Bands.
+    Output: a DataFrame with columns middle, upper, lower, bandwidth
     """
     middle = df[column].rolling(window=period, min_periods=period).mean()
     std = df[column].rolling(window=period, min_periods=period).std()
@@ -41,7 +41,7 @@ def bollinger_bands(df: pd.DataFrame, period: int = 20, std_dev: float = 2.0,
 def keltner_channel(df: pd.DataFrame, ema_period: int = 20, atr_period: int = 10,
                      atr_multiplier: float = 2.0) -> pd.DataFrame:
     """
-    کانال کلتنر — مشابه بولینگر ولی بر پایه‌ی ATR به جای انحراف معیار.
+    Keltner Channel — similar to Bollinger but based on ATR instead of standard deviation.
     """
     middle = df["close"].ewm(span=ema_period, adjust=False, min_periods=ema_period).mean()
     atr_value = atr(df, atr_period)
@@ -52,8 +52,8 @@ def keltner_channel(df: pd.DataFrame, ema_period: int = 20, atr_period: int = 10
 
 def obv(df: pd.DataFrame) -> pd.Series:
     """
-    On-Balance Volume — حجم تجمعی بر اساس جهت حرکت قیمت.
-    واگرایی بین OBV و قیمت می‌تواند نشانه‌ی ضعف روند باشد.
+    On-Balance Volume — cumulative volume based on the direction of price movement.
+    Divergence between OBV and price can be a sign of trend weakness.
     """
     direction = df["close"].diff().apply(lambda x: 1 if x > 0 else (-1 if x < 0 else 0))
     return (direction * df["volume"]).cumsum()

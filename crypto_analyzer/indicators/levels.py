@@ -1,6 +1,6 @@
 """
 indicators/levels.py
-سطوح قیمتی: Fibonacci Retracement, Pivot Points, Support/Resistance (بر پایه‌ی swing)
+Price levels: Fibonacci Retracement, Pivot Points, Support/Resistance (swing-based)
 """
 
 import numpy as np
@@ -21,8 +21,8 @@ FIB_EXTENSION_RATIOS = [1.272, 1.414, 1.618, 2.0, 2.618]
 
 def fibonacci_retracement(swing_high: float, swing_low: float) -> dict:
     """
-    سطوح اصلاحی فیبوناچی بین یک قله و یک دره.
-    اگر روند صعودی است (دره قبل از قله)، سطوح از بالا به پایین اصلاح می‌شوند.
+    Fibonacci retracement levels between a peak and a trough.
+    If the trend is up (trough before peak), the levels retrace from top to bottom.
     """
     diff = swing_high - swing_low
     levels = {}
@@ -32,7 +32,7 @@ def fibonacci_retracement(swing_high: float, swing_low: float) -> dict:
 
 
 def fibonacci_extension(swing_high: float, swing_low: float) -> dict:
-    """سطوح گسترشی فیبوناچی — برای تخمین اهداف قیمتی فراتر از swing اصلی."""
+    """Fibonacci extension levels — for estimating price targets beyond the main swing."""
     diff = swing_high - swing_low
     levels = {}
     for ratio in FIB_EXTENSION_RATIOS:
@@ -41,12 +41,12 @@ def fibonacci_extension(swing_high: float, swing_low: float) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Pivot Points (فرمول کلاسیک روزانه)
+# Pivot Points (classic daily formula)
 # ---------------------------------------------------------------------------
 def classic_pivot_points(prev_high: float, prev_low: float, prev_close: float) -> dict:
     """
-    پیوت پوینت کلاسیک بر اساس کندل/دوره‌ی قبلی.
-    خروجی: PP, R1-R3, S1-S3
+    Classic pivot points based on the previous candle/period.
+    Output: PP, R1-R3, S1-S3
     """
     pp = (prev_high + prev_low + prev_close) / 3
     r1 = (2 * pp) - prev_low
@@ -63,9 +63,9 @@ def classic_pivot_points(prev_high: float, prev_low: float, prev_close: float) -
 # ---------------------------------------------------------------------------
 def find_swing_points(df: pd.DataFrame, lookback: int = None) -> pd.DataFrame:
     """
-    قله‌ها (swing high) و دره‌های (swing low) محلی را پیدا می‌کند.
-    یک کندل swing high است اگر high آن از 'lookback' کندل قبل و بعدش بیشتر باشد.
-    خروجی: ستون‌های is_swing_high, is_swing_low به df اضافه می‌شود.
+    Finds local peaks (swing highs) and troughs (swing lows).
+    A candle is a swing high if its high is greater than 'lookback' candles before and after it.
+    Output: the columns is_swing_high, is_swing_low are added to df.
     """
     if lookback is None:
         lookback = config.SWING_LOOKBACK_CANDLES
@@ -93,9 +93,9 @@ def find_swing_points(df: pd.DataFrame, lookback: int = None) -> pd.DataFrame:
 
 def cluster_levels(prices: list, tolerance_pct: float = None) -> list:
     """
-    چند سطح قیمتی نزدیک به هم را در یک سطح واحد (میانگین) ادغام می‌کند
-    و بر اساس تعداد برخورد (قدرت سطح) مرتب شده برمی‌گرداند.
-    خروجی: لیستی از دیکشنری {"level": قیمت, "touches": تعداد برخورد}
+    Merges several nearby price levels into one single level (the mean)
+    and returns them sorted by the number of touches (level strength).
+    Output: a list of dicts {"level": price, "touches": number of touches}
     """
     if tolerance_pct is None:
         tolerance_pct = config.LEVEL_EQUALITY_TOLERANCE_PCT
@@ -120,15 +120,16 @@ def cluster_levels(prices: list, tolerance_pct: float = None) -> list:
 
 def support_resistance_levels(df: pd.DataFrame, lookback: int = None) -> dict:
     """
-    سطوح حمایت و مقاومت را از روی swing high/low های اخیر استخراج می‌کند.
-    خروجی: {"resistance": [...], "support": [...]}
-    هر سطح شامل level (قیمت) و touches (تعداد برخورد، یعنی قدرت سطح) است.
+    Extracts support and resistance levels from recent swing highs/lows.
+    Output: {"resistance": [...], "support": [...]}
+    Each level includes level (price) and touches (number of touches, i.e. level strength).
 
-    پنجره‌ی تازگی (رفع مشکل ممیزی شماره‌ی ۴): فقط swing های
-    config.RECENT_SR_CANDLES کندل اخیر (پیش‌فرض ۲۵۰) در خوشه‌بندی شرکت می‌کنند.
-    روی تاریخچه‌های بلند بایننس (۱۰۰۰+ کندل) سطوح کهنه و دور از رفتار فعلی قیمت
-    نتیجه را خراب می‌کردند و در روندهای نزولی عملاً هیچ حمایتی پیدا نمی‌شد.
-    اگر کل داده از این پنجره کوتاه‌تر باشد، همه‌ی داده استفاده می‌شود.
+    Recency window (fix for audit issue no. 4): only the swings of the last
+    config.RECENT_SR_CANDLES candles (default 250) take part in the clustering.
+    On long Binance histories (1000+ candles), stale levels far from the current
+    price behavior were ruining the result and in downtrends practically no
+    support was found. If the whole data is shorter than this window, all of
+    the data is used.
     """
     swing_df = find_swing_points(df, lookback)
     current_price = df["close"].iloc[-1]
@@ -143,7 +144,7 @@ def support_resistance_levels(df: pd.DataFrame, lookback: int = None) -> dict:
     resistance_clusters = cluster_levels(swing_highs)
     support_clusters = cluster_levels(swing_lows)
 
-    # فقط سطوحی که واقعاً بالای/پایین قیمت فعلی‌اند به عنوان مقاومت/حمایت معنادارند
+    # Only levels that are really above/below the current price are meaningful as resistance/support
     resistance = [r for r in resistance_clusters if r["level"] > current_price]
     support = [s for s in support_clusters if s["level"] < current_price]
 

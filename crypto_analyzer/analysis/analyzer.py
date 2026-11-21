@@ -1,7 +1,7 @@
 """
 analysis/analyzer.py
-هماهنگ‌کننده‌ی کل فرآیند: گرفتن داده -> محاسبه‌ی اندیکاتورها -> تشخیص الگوها
--> سطوح حمایت/مقاومت -> حد ضرر -> بک‌تست -> گزارش نهایی.
+Coordinator of the whole process: fetch data -> compute indicators -> detect patterns
+-> support/resistance levels -> stop loss -> backtest -> final report.
 """
 
 import numpy as np
@@ -27,7 +27,7 @@ class AnalysisError(Exception):
 # Data preparation
 # ---------------------------------------------------------------------------
 def build_dataframe(candles: list) -> pd.DataFrame:
-    """لیست دیکشنری کندل‌ها را به DataFrame ایندکس‌شده با datetime تبدیل می‌کند."""
+    """Converts a list of candle dicts into a DataFrame indexed by datetime."""
     df = pd.DataFrame(candles)
     df = df.set_index("datetime")
     df = df[["open", "high", "low", "close", "volume"]].astype(float)
@@ -36,15 +36,15 @@ def build_dataframe(candles: list) -> pd.DataFrame:
 
 
 RESAMPLE_RULE_MAP = {
-    "1h": "1h",     # خام 30 دقیقه‌ای -> بالا به 1 ساعته
-    "4h": None,     # خام از قبل 4 ساعته‌ی طبیعی است — resample دوباره لازم نیست
-    "1d": "1D",     # خام 4 ساعته -> بالا به روزانه
-    "1w": "1W",     # خام 4 روزه -> بالا به هفتگی
+    "1h": "1h",     # raw 30-minute -> up to 1-hour
+    "4h": None,     # raw is already native 4-hour — no need to resample again
+    "1d": "1D",     # raw 4-hour -> up to daily
+    "1w": "1W",     # raw 4-day -> up to weekly
 }
 
 
 def resample_to_timeframe(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
-    """کندل‌های خام را در صورت نیاز به تایم‌فریم بزرگ‌تر resample می‌کند."""
+    """Resamples raw candles into a larger timeframe if needed."""
     rule = RESAMPLE_RULE_MAP.get(timeframe)
     if rule is None:
         return df
@@ -55,7 +55,7 @@ def resample_to_timeframe(df: pd.DataFrame, timeframe: str) -> pd.DataFrame:
 
 
 def fetch_candles(symbol_query: str, vs_currency: str = None, timeframe: str = "1d") -> pd.DataFrame:
-    """نماد را جستجو، کندل‌ها را از CoinGecko می‌گیرد و به DataFrame آماده تبدیل می‌کند."""
+    """Searches for the symbol, fetches candles from CoinGecko and converts them into a ready DataFrame."""
     if vs_currency is None:
         vs_currency = config.DEFAULT_VS_CURRENCY
     if timeframe not in config.TIMEFRAME_DAYS_MAP:
@@ -78,7 +78,7 @@ def fetch_candles(symbol_query: str, vs_currency: str = None, timeframe: str = "
 
 
 # ---------------------------------------------------------------------------
-# Binance data (منبع اصلی از نسخه‌ی ۲ — کندل بومی، بدون resample، با حجم واقعی)
+# Binance data (primary source since v2 — native candles, no resample, real volume)
 # ---------------------------------------------------------------------------
 BINANCE_INTERVAL_MAP = {
     "1h": "1h",
@@ -91,10 +91,10 @@ BINANCE_INTERVAL_MAP = {
 def fetch_candles_binance(symbol: str, timeframe: str = "4h",
                           total_candles: int = None) -> pd.DataFrame:
     """
-    کندل‌ها را مستقیم از بایننس می‌گیرد (جفت USDT، بدون نیاز به API key).
-    کندل‌ها بومیِ همان تایم‌فریم‌اند، پس هیچ resample ای انجام نمی‌شود و حجم
-    معاملات هم حجم واقعی صرافی است (رفع مشکلات ممیزی ۱ و ۷).
-    تعداد کندل پیش‌فرض از config.BINANCE_CANDLES_PER_TIMEFRAME خوانده می‌شود.
+    Fetches candles directly from Binance (USDT pair, no API key needed).
+    The candles are native to that timeframe, so no resampling is done and the
+    trading volume is the exchange's real volume (fixes audit issues 1 and 7).
+    The default candle count is read from config.BINANCE_CANDLES_PER_TIMEFRAME.
     """
     if timeframe not in BINANCE_INTERVAL_MAP:
         raise AnalysisError(
@@ -119,7 +119,7 @@ def fetch_candles_binance(symbol: str, timeframe: str = "4h",
 
 
 # ---------------------------------------------------------------------------
-# Indicator snapshot (آخرین مقادیر)
+# Indicator snapshot (latest values)
 # ---------------------------------------------------------------------------
 def _safe_round(value, decimals=6):
     return round(float(value), decimals) if pd.notna(value) and np.isfinite(value) else None
@@ -137,7 +137,7 @@ def compute_indicator_snapshot(df: pd.DataFrame) -> dict:
     keltner_df = volatility.keltner_channel(df)
     obv_series = volatility.obv(df)
 
-    # جهت OBV در چند کندل اخیر (برای کمک به تشخیص واگرایی حجم/قیمت)
+    # OBV direction over the last few candles (to help detect volume/price divergence)
     obv_trend = None
     if len(obv_series.dropna()) >= 5:
         obv_recent = obv_series.iloc[-5:]
@@ -179,9 +179,9 @@ def compute_indicator_snapshot(df: pd.DataFrame) -> dict:
 def fetch_candles_forex(symbol: str, timeframe: str = "4h",
                         total_candles: int = None) -> pd.DataFrame:
     """
-    کندل‌های فارکس از فید Dukascopy (ماژول افزودنی فارکس — FOREX_FA.md).
-    شکل خروجی دقیقاً مثل fetch_candles_binance است؛ عمق واقعی به فید
-    بستگی دارد و اگر از MIN_CANDLES_REQUIRED کمتر باشد خطای روشن می‌دهد.
+    Forex candles from the Dukascopy feed (forex add-on module — FOREX_FA.md).
+    The output shape is exactly like fetch_candles_binance; the real depth depends
+    on the feed, and if it is below MIN_CANDLES_REQUIRED it raises a clear error.
     """
     from data import forex_client
     try:
@@ -198,9 +198,9 @@ def fetch_candles_forex(symbol: str, timeframe: str = "4h",
 def fetch_market(symbol: str, timeframe: str = "4h",
                  market: str = None) -> pd.DataFrame:
     """
-    مسیریابی بازار (افزودنی): market صریح ("forex"/"crypto") مقدم است؛
-    بدون آن، نمادهای مجموعه‌ی فارکس (config.FOREX_SYMBOLS) به فید
-    فارکس و بقیه دقیقاً مثل قبل به بایننس می‌روند.
+    Market routing (add-on): an explicit market ("forex"/"crypto") takes precedence;
+    without it, symbols in the forex set (config.FOREX_SYMBOLS) go to the forex
+    feed and everything else goes to Binance exactly as before.
     """
     from data import forex_client
     if market is None:
@@ -216,11 +216,11 @@ def fetch_market(symbol: str, timeframe: str = "4h",
 def run_full_analysis(symbol_query: str, vs_currency: str = None, timeframe: str = "1d",
                       data_source: str = "binance") -> dict:
     """
-    تحلیل کامل یک جفت‌ارز/تایم‌فریم: اندیکاتورها، الگوهای فعلی، S/R، حد ضرر، بک‌تست.
-    data_source: "binance" (پیش‌فرض نسخه‌ی ۲ — کندل بومی و تاریخچه‌ی بلند) یا
-    "coingecko" (رفتار قدیمی نسخه‌ی ۱، به عنوان مسیر جایگزین نگه داشته شده)
-    یا "forex" (فید Dukascopy — افزودنی فارکس) یا "market" (مسیریابی
-    خودکار بر اساس نماد: فارکس یا کریپتو).
+    Full analysis of one pair/timeframe: indicators, current patterns, S/R, stop loss, backtest.
+    data_source: "binance" (default in v2 — native candles and long history) or
+    "coingecko" (the old v1 behavior, kept as a fallback path)
+    or "forex" (Dukascopy feed — forex add-on) or "market" (automatic
+    routing by symbol: forex or crypto).
     """
     if data_source == "binance":
         df = fetch_candles_binance(symbol_query, timeframe)
@@ -237,7 +237,7 @@ def run_full_analysis(symbol_query: str, vs_currency: str = None, timeframe: str
 
 
 def build_report(df: pd.DataFrame, symbol_label: str, timeframe: str) -> dict:
-    """همان تحلیل کامل، ولی روی یک DataFrame آماده (برای تست با داده‌ی مصنوعی هم قابل استفاده)."""
+    """The same full analysis, but on a ready DataFrame (also usable for tests with synthetic data)."""
     indicator_snapshot = compute_indicator_snapshot(df)
     sr_levels = levels.support_resistance_levels(df)
 

@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """
 tests/test_ev_layer.py
-تست آفلاین لایه‌ی تصمیم EV — بدون اینترنت:
+Offline test of the EV decision layer — no internet:
 
     python tests/test_ev_layer.py
 
-پوشش:
-۱) ریاضی EV در برابر مقادیر دستی (نرخ برد، میانگین برد/باخت، امید
-   ریاضی، پروفیت فاکتور، نرخ برد سربه‌سر) + لبه‌ی بدون باخت و همه‌باخت
-   و ورودی تجمیعی و مرزهای اطمینان نمونه.
-۲) همه‌ی شاخه‌های قواعد تصمیم (decide_candidate): قوی، خرید/فروش،
-   رد اجباری EV نامثبت حتی با امتیاز ۹۵، نمونه ناکافی، EV غایب،
-   حد ضرر/هدف غایب، و دو حالت WAIT.
-۳) مسیر خواندن کش از فایل موقت (بدون محاسبه و بدون شبکه).
+Coverage:
+1) EV math against hand-computed values (win rate, average win/loss, expected
+   value, profit factor, break-even win rate) + the no-loss and all-loss edges,
+   aggregate input, and sample confidence boundaries.
+2) All branches of the decision rules (decide_candidate): strong, buy/sell,
+   mandatory rejection of non-positive EV even with a score of 95, insufficient
+   sample, absent EV, absent stop loss/target, and the two WAIT cases.
+3) The cache-reading path from a temporary file (no computation, no network).
 """
 
 import json
@@ -37,11 +37,11 @@ def approx(a, b, tol=1e-3):
     return a is not None and b is not None and abs(a - b) <= tol
 
 
-# --- ۱) ریاضی EV با جواب دستی -------------------------------------------------
-# R ها: بردها 2, 1, 0.5 (مجموع 3.5، میانگین 1.1667) — باخت‌ها ‎-1, -1, -0.5
-# (مجموع ‎-2.5، قدرمطلق میانگین 0.8333) — نرخ برد 0.5
-# امید ریاضی = (3.5-2.5)/6 = 0.1667 | پروفیت فاکتور = 3.5/2.5 = 1.4
-# سربه‌سر = 0.8333 / (1.1667+0.8333) = 0.4167
+# --- 1) EV math with a hand-computed answer ---
+# R values: wins 2, 1, 0.5 (sum 3.5, mean 1.1667) — losses -1, -1, -0.5
+# (sum -2.5, absolute mean 0.8333) — win rate 0.5
+# Expected value = (3.5-2.5)/6 = 0.1667 | profit factor = 3.5/2.5 = 1.4
+# Break-even = 0.8333 / (1.1667+0.8333) = 0.4167
 e = ev_mod.compute_ev([2.0, 1.0, -1.0, -1.0, 0.5, -0.5])
 check("نرخ برد", approx(e["win_rate"], 0.5), str(e["win_rate"]))
 check("میانگین برد", approx(e["avg_win_r"], 1.1667), str(e["avg_win_r"]))
@@ -53,29 +53,29 @@ check("نرخ برد سربه‌سر", approx(e["break_even_win_rate"], 0.4167),
 check("تعداد معاملات", e["n_trades"] == 6)
 check("نمونه‌ی ۶تایی = ناکافی", e["reliability"] == "insufficient")
 
-# ورودی دیکشنری معامله (همان فرم لاگ بک‌تست)
+# Trade-dict input (the same form as the backtest log)
 e2 = ev_mod.compute_ev({"trades": [{"r": 1.0}, {"r": -1.0}]})
 check("ورودی trades: امید ریاضی صفر", approx(e2["expectancy_r"], 0.0))
 check("ورودی trades: سربه‌سر ۰٫۵", approx(e2["break_even_win_rate"], 0.5))
 
-# لبه: بدون باخت → پروفیت فاکتور بی‌نهایت، سربه‌سر صفر
+# Edge: no losses → infinite profit factor, break-even zero
 e3 = ev_mod.compute_ev([1.0, 2.0, 3.0])
 check("بدون باخت: PF بی‌نهایت", e3["profit_factor"] == float("inf"))
 check("بدون باخت: میانگین باخت صفر", e3["avg_loss_r"] == 0.0)
 check("بدون باخت: سربه‌سر صفر", e3["break_even_win_rate"] == 0.0)
 check("بدون باخت: امید ریاضی ۲", approx(e3["expectancy_r"], 2.0))
 
-# لبه: همه باخت → PF صفر، سربه‌سر یک
+# Edge: all losses → PF zero, break-even one
 e4 = ev_mod.compute_ev([-1.0, -2.0])
 check("همه باخت: PF صفر", e4["profit_factor"] == 0.0)
 check("همه باخت: سربه‌سر یک", e4["break_even_win_rate"] == 1.0)
 check("همه باخت: نرخ برد صفر", e4["win_rate"] == 0.0)
 
-# خالی
+# Empty
 e5 = ev_mod.compute_ev([])
 check("خالی: n صفر و EV تهی", e5["n_trades"] == 0 and e5["expectancy_r"] is None)
 
-# ورودی تجمیعی آماده: برد ۶۰٪، میانگین برد ۲، باخت ۱ → EV = 1.2-0.4 = 0.8
+# Ready aggregate input: 60% win, average win 2, loss 1 → EV = 1.2-0.4 = 0.8
 e6 = ev_mod.compute_ev({"win_rate": 0.6, "avg_win_r": 2.0,
                         "avg_loss_r": 1.0, "n_trades": 50})
 check("تجمیعی: امید ریاضی", approx(e6["expectancy_r"], 0.8), str(e6["expectancy_r"]))
@@ -83,7 +83,7 @@ check("تجمیعی: سربه‌سر ۱/۳", approx(e6["break_even_win_rate"], 1
 check("تجمیعی: PF", approx(e6["profit_factor"], 3.0), str(e6["profit_factor"]))
 check("تجمیعی: نمونه ۵۰ = قابل اتکا", e6["reliability"] == "ok")
 
-# مرزهای اطمینان نمونه: ‎<10 ناکافی، 10..29 کم، ‎>=30 قابل اتکا
+# Sample confidence boundaries: <10 insufficient, 10..29 low, >=30 reliable
 check("مرز اطمینان: ۹ ناکافی",
       ev_mod.compute_ev([0.1] * 9)["reliability"] == "insufficient")
 check("مرز اطمینان: ۱۰ کم",
@@ -93,7 +93,7 @@ check("مرز اطمینان: ۲۹ کم",
 check("مرز اطمینان: ۳۰ قابل اتکا",
       ev_mod.compute_ev([0.1] * 30)["reliability"] == "ok")
 
-# --- ۲) قواعد تصمیم ------------------------------------------------------------
+# --- 2) Decision rules ---
 def cand(score=70.0, direction="long", stop=90.0, target=120.0):
     return {"symbol": "TEST", "timeframe": "4h", "direction": direction,
             "score": score, "stop": stop, "target": target}
@@ -132,7 +132,7 @@ d = ev_mod.decide_candidate(cand(85, "long"), ev(n=15, rel="low"))
 check("امتیاز قوی ولی نمونه کم → WAIT (نه STRONG)", d["decision"] == "WAIT")
 check("برچسب فارسی تصمیم", ev_mod.decide_candidate(cand(), ev())["decision_fa"] == "خرید")
 
-# --- ۳) مسیر کش از فایل موقت ----------------------------------------------------
+# --- 3) Cache path from a temporary file ---
 tmp = tempfile.mkdtemp()
 cache_path = os.path.join(tmp, "ev_cache.json")
 entry = {"symbol": "TESTX", "timeframe": "4h", "threshold": 60,
@@ -149,7 +149,7 @@ try:
 finally:
     ev_mod.CACHE_FILE = _orig_cache_file
     ev_mod._MEM_CACHE.clear()
-# ۳۰ معامله: ۲۰ برد (میانگین ۱٫۵) و ۱۰ باخت (‎-۱) → EV = (30-10)/30 = 0.6667
+# 30 trades: 20 wins (mean 1.5) and 10 losses (-1) → EV = (30-10)/30 = 0.6667
 check("کش: خوانده شد", got is not None)
 check("کش: امید ریاضی از R های کش", got is not None and approx(got["expectancy_r"], 0.6667),
       str(got and got["expectancy_r"]))

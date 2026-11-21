@@ -1,23 +1,26 @@
 """
 scanner.py
-اسکنر چندارزی بازار: برای هر جفت (ارز × تایم‌فریم) از لیست config.SCAN_SYMBOLS
-داده را از بایننس می‌گیرد، همان گزارش کامل analyzer را می‌سازد و یک امتیاز
-شفاف ۰ تا ۱۰۰ حساب می‌کند تا بشود نامزدها را رتبه‌بندی کرد و بهترین را
-به‌عنوان «پیشنهاد امروز» نشان داد.
+Multi-symbol market scanner: for each (symbol × timeframe) pair in config.SCAN_SYMBOLS,
+it fetches data from Binance, builds the same full analyzer report, and computes a
+transparent score from 0 to 100 so candidates can be ranked and the best one can be
+shown as "today's pick".
 
-مؤلفه‌های امتیاز (همه‌ی سقف‌ها و ثابت‌ها در config.py هستند):
-- روند (۲۵): هم‌ترازی قیمت با EMA50 و EMA200 + جهت EMA50 نسبت به EMA200؛
-  با قدرت روند (ADX) مقیاس می‌شود. علامت این مؤلفه جهت معامله را تعیین می‌کند.
-- مومنتوم (۲۰): هم‌جهتی هیستوگرام MACD با جهت + قرارگیری RSI در ناحیه‌ی سالم
-  همان جهت؛ مقادیر افراطی RSI (خرید/فروش اشباع) جریمه می‌شوند.
-- الگو (۲۵): بهترین الگوی تأییدشده‌ی اخیر (کندلی یا نموداری) که هم‌جهت است،
-  بر اساس نرخ موفقیت بک‌تست همان الگو روی همین ارز/تایم‌فریم نمره می‌گیرد.
-- سودبه‌ریسک (۲۰): فاصله تا اولین سطح مقابل (هدف) نسبت به فاصله تا حد ضرر
-  پیشنهادی.
-- حجم (۱۰): هم‌جهتی روند OBV با جهت معامله.
+Score components (all caps and constants are in config.py):
+- Trend (25): alignment of price with EMA50 and EMA200 + the direction of EMA50
+  relative to EMA200; scaled by trend strength (ADX). The sign of this component
+  determines the trade direction.
+- Momentum (20): the MACD histogram aligned with the direction + RSI located in the
+  healthy zone for that direction; extreme RSI values (overbought/oversold) are penalized.
+- Pattern (25): the best recent confirmed pattern (candlestick or chart) aligned with
+  the direction, scored from the backtest success rate of that same pattern on the
+  same symbol/timeframe.
+- Risk/reward (20): the distance to the first opposing level (target) relative to
+  the distance to the suggested stop loss.
+- Volume (10): the OBV trend aligned with the trade direction.
 
-⚠️ امتیاز بالا «تضمین سود» نیست؛ فقط یعنی در این لحظه، از بین گزینه‌های اسکن‌شده
-این ترکیب ارز/تایم‌فریم/جهت از نظر همین قواعد مکانیکی وضعیت بهتری دارد.
+⚠️ A high score is not a "guarantee of profit"; it only means that, at this moment,
+among the scanned options, this symbol/timeframe/direction combination looks better
+under these mechanical rules.
 """
 
 import sys
@@ -35,13 +38,13 @@ from indicators import trend as trend_ind
 from indicators import volatility as vol_ind
 
 
-# کش آخرین اسکن: (symbol, timeframe) -> (df, report)
-# برای این‌که main بتواند نمودار پیشنهاد اول را بدون گرفتن دوباره‌ی داده رسم کند.
+# Cache of the most recent scan: (symbol, timeframe) -> (df, report)
+# Lets main render the top pick's chart without fetching the data again.
 _SCAN_CACHE = {}
 
 
 def get_scan_cache(symbol: str, timeframe: str):
-    """(df, report) ذخیره‌شده‌ی یک نامزد از آخرین اسکن را برمی‌گرداند یا None."""
+    """Return the stored (df, report) for a candidate from the most recent scan, or None."""
     return _SCAN_CACHE.get((symbol.upper(), timeframe))
 
 
@@ -50,14 +53,15 @@ def _clamp(value: float, lo: float, hi: float) -> float:
 
 
 # ---------------------------------------------------------------------------
-# مؤلفه‌ها
+# Components
 # ---------------------------------------------------------------------------
 def _trend_signed_score(df, ind) -> float:
     """
-    امتیاز روند با علامت: مثبت = تمایل لانگ، منفی = تمایل شورت، بازه‌ی [-۲۵, +۲۵].
-    سه شرط هم‌ترازی (هرکدام ±۱): قیمت بالای EMA50، قیمت بالای EMA200،
-    EMA50 بالای EMA200. بعد با قدرت روند (ADX) مقیاس می‌شود: ADX>=25 مقیاس
-    کامل، ADX پایین‌تر مقیاس خطی کمتر (کف ۰٫۵)، ADX ناموجود مقیاس ۰٫۸.
+    Signed trend score: positive = long bias, negative = short bias, range [-25, +25].
+    Three alignment conditions (each ±1): price above EMA50, price above EMA200,
+    EMA50 above EMA200. It is then scaled by trend strength (ADX): ADX >= 25 gets the
+    full scale, a lower ADX gets a smaller linear scale (floor 0.5), and a missing ADX
+    uses a scale of 0.8.
     """
     price = ind["price"]
     ema50 = trend_ind.ema(df, 50).iloc[-1]
@@ -82,11 +86,11 @@ def _trend_signed_score(df, ind) -> float:
 
 
 def _momentum_score(ind, direction: str) -> float:
-    """امتیاز مومنتوم ۰ تا ۲۰ برای جهت داده‌شده (MACD هم‌جهت ۱۲ + ناحیه‌ی RSI تا ۸)."""
+    """Momentum score from 0 to 20 for the given direction (aligned MACD 12 + RSI zone up to 8)."""
     score = 0.0
     hist = ind["macd"].get("histogram")
     if hist is None:
-        score += config.SCORE_MOMENTUM_MAX * 0.3  # نامشخص: نصف بخش MACD
+        score += config.SCORE_MOMENTUM_MAX * 0.3  # Unknown: half of the MACD portion
     elif (direction == "long" and hist > 0) or (direction == "short" and hist < 0):
         score += config.SCORE_MOMENTUM_MAX * 0.6
 
@@ -94,16 +98,16 @@ def _momentum_score(ind, direction: str) -> float:
     if rsi is None:
         score += 4.0
     else:
-        # برای شورت، RSI را آینه می‌کنیم تا یک جدول واحد برای هر دو جهت کافی باشد
+        # For shorts, mirror the RSI so a single table works for both directions
         eff = rsi if direction == "long" else 100.0 - rsi
         if 45 <= eff <= 65:
-            score += 8.0    # ناحیه‌ی سالم روند
+            score += 8.0    # Healthy trend zone
         elif 40 <= eff < 45 or 65 < eff <= 70:
             score += 5.0
         elif 35 <= eff < 40 or 70 < eff <= 75:
             score += 3.0
         elif eff > 75:
-            score += 0.0    # اشباع افراطی علیه ورود تازه در این جهت
+            score += 0.0    # Extreme saturation against opening a new position in this direction
         else:  # eff < 35
             score += 2.0
     return min(score, config.SCORE_MOMENTUM_MAX)
@@ -111,9 +115,10 @@ def _momentum_score(ind, direction: str) -> float:
 
 def _pattern_score(report, direction: str):
     """
-    بهترین الگوی اخیر هم‌جهت را پیدا می‌کند و بر اساس بک‌تست خودش روی همین
-    ارز/تایم‌فریم نمره می‌دهد. خروجی: (امتیاز, اطلاعات الگو یا None)
-    نگاشت نرخ موفقیت: ۳۰٪ -> ۰ و ۷۰٪ -> ۲۵ (خطی)، ضرب در min(1, رخداد/۱۰).
+    Find the best recent pattern aligned with the direction and score it using its own
+    backtest on the same symbol/timeframe. Returns: (score, pattern info or None).
+    Success-rate mapping: 30% -> 0 and 70% -> 25 (linear), multiplied by
+    min(1, occurrences/10).
     """
     want_bias = "bullish" if direction == "long" else "bearish"
     best = None
@@ -152,10 +157,10 @@ def _pattern_score(report, direction: str):
 
 def _rr_score(report, direction: str, price: float):
     """
-    امتیاز سودبه‌ریسک ۰ تا ۲۰ + (نسبت محاسبه‌شده, سطح هدف).
-    هدف = اولین سطح مقابلِ قیمت (مقاومت برای لانگ، حمایت برای شورت)؛
-    ریسک = فاصله تا حد ضرر پیشنهادی همان جهت. اگر هرکدام موجود نباشد
-    امتیاز ثابت config.SCORE_RR_MISSING داده می‌شود.
+    Risk/reward score from 0 to 20 + (computed ratio, target level).
+    Target = the first level opposing the price (resistance for long, support for short);
+    risk = the distance to the suggested stop loss for that direction. If either is
+    unavailable, the fixed score config.SCORE_RR_MISSING is used.
     """
     sr = report.get("support_resistance", {})
     if direction == "long":
@@ -184,7 +189,7 @@ def _rr_score(report, direction: str, price: float):
 
 
 def _volume_score(ind, direction: str) -> float:
-    """روند OBV هم‌جهت: ۱۰ | نامشخص: ۵ | مخالف: ۰."""
+    """Aligned OBV trend: 10 | unknown: 5 | opposed: 0."""
     obv = ind.get("obv_trend")
     if obv is None:
         return config.SCORE_VOLUME_MAX / 2.0
@@ -194,21 +199,22 @@ def _volume_score(ind, direction: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# گام ۳ — طبقه‌بندی رژیم بازار (تابع جدید؛ فقط با apply_regime=True استفاده می‌شود)
+# Step 3 — Market-regime classification (new function; used only with apply_regime=True)
 # ---------------------------------------------------------------------------
 def classify_regime(df, report) -> str:
     """
-    رژیم بازار را برمی‌گرداند: "trend" | "range" | "volatile".
+    Return the market regime: "trend" | "range" | "volatile".
 
-    قواعد (همه‌ی ثابت‌ها در config):
-    - volatile: صدک پهنای باند بولینگر فعلی در پنجره‌ی REGIME_BBW_WINDOW کندل
-      اخیر حداقل REGIME_BBW_VOLATILE_PERCENTILE باشد. اول بررسی می‌شود، چون
-      در نوسان افراطی حتی روندها هم قابل اتکا نیستند.
-    - trend: ADX حداقل REGIME_ADX_TREND_MIN و شیب EMA200 روی
-      REGIME_EMA200_SLOPE_LOOKBACK کندل حداقل REGIME_EMA200_SLOPE_MIN_PCT
-      درصد قدرمطلق داشته باشد. اگر EMA200 هنوز داده‌ی کافی نداشته باشد،
-      فقط ADX ملاک است.
-    - range: بقیه‌ی حالت‌ها.
+    Rules (all constants are in config):
+    - volatile: the percentile of the current Bollinger Band width within the window of
+      the most recent REGIME_BBW_WINDOW candles is at least
+      REGIME_BBW_VOLATILE_PERCENTILE. This is checked first, because during extreme
+      volatility even trends are unreliable.
+    - trend: ADX is at least REGIME_ADX_TREND_MIN and the EMA200 slope over
+      REGIME_EMA200_SLOPE_LOOKBACK candles has an absolute value of at least
+      REGIME_EMA200_SLOPE_MIN_PCT percent. If EMA200 does not yet have enough data,
+      ADX alone is the criterion.
+    - range: all other cases.
     """
     ind = (report or {}).get("indicators") or {}
 
@@ -239,14 +245,15 @@ def classify_regime(df, report) -> str:
 
 
 # ---------------------------------------------------------------------------
-# گام ۴ — امتیاز مؤلفه‌ی ساختار (فقط وقتی extras به score_candidate داده شود)
+# Step 4 — Structure-component score (only when extras is passed to score_candidate)
 # ---------------------------------------------------------------------------
 def _structure_score(extras: dict, direction: str) -> float:
     """
-    از خروجی analysis.structure.analyze_structure یک امتیاز در بازه‌ی
-    [-STRUCTURE_MAX, +STRUCTURE_MAX] می‌سازد: هم‌جهتی هر سیگنال ساختاری با
-    جهت نامزد امتیاز مثبت و مخالفتش امتیاز منفی می‌دهد (واگرایی RSI: ±۴،
-    واگرایی MACD: ±۳، آخرین رویداد BOS/CHoCH: ±۳ — ثابت‌ها در config).
+    Build a score in the range [-STRUCTURE_MAX, +STRUCTURE_MAX] from the output of
+    analysis.structure.analyze_structure: alignment of each structural signal with the
+    candidate direction gives positive points and opposition gives negative points
+    (RSI divergence: ±4, MACD divergence: ±3, latest BOS/CHoCH event: ±3 — the
+    constants are in config).
     """
     def _aligned(bias) -> float:
         if bias is None:
@@ -263,14 +270,14 @@ def _structure_score(extras: dict, direction: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# گام ۶ — حجم پوزیشن (فقط محاسبه‌ی افزودنی روی خروجی‌های موجود)
+# Step 6 — Position size (an additive calculation based on existing outputs only)
 # ---------------------------------------------------------------------------
 def _position_sizing(report, entry, stop):
     """
-    حجم پیشنهادی با ریسک ثابت: مبلغ ریسک = RISK_PER_TRADE_PCT درصد از
-    ACCOUNT_SIZE_USDT (placeholder — نه موجودی واقعی کاربر) و حجم =
-    مبلغ ریسک / |ورود − حد ضرر|. ATR گزارش هم برای اطلاع کنارش می‌آید.
-    اگر ورود/حد ضرر نباشد None برمی‌گردد.
+    Suggested size using fixed risk: risk amount = RISK_PER_TRADE_PCT percent of
+    ACCOUNT_SIZE_USDT (a placeholder — not the user's real balance), and
+    size = risk amount / |entry − stop loss|. The report's ATR is included alongside
+    for information. Returns None if entry/stop loss is missing.
     """
     if entry is None or stop is None:
         return None
@@ -290,23 +297,23 @@ def _position_sizing(report, entry, stop):
 
 
 # ---------------------------------------------------------------------------
-# امتیازدهی یک نامزد
+# Scoring a candidate
 # ---------------------------------------------------------------------------
 def score_candidate(df, report, symbol: str, timeframe: str,
                     higher_tf_direction: str = None,
                     apply_regime: bool = False,
                     extras: dict = None) -> dict:
     """
-    پارامترهای افزودنی (همه پیش‌فرضِ «خاموش» دارند و مسیر پیش‌فرض دقیقاً
-    رفتار قبلی است):
-    - higher_tf_direction (گام ۲): جهت تایم‌فریم بالاتر ("long"/"short")؛
-      اگر با جهت نامزد مخالف باشد، امتیاز کل در MTF_CONFLICT_FACTOR ضرب و
-      کلید "mtf" به خروجی اضافه می‌شود.
-    - apply_regime (گام ۳): اگر True، مؤلفه‌ها بر اساس classify_regime
-      مقیاس می‌شوند و کلید "regime" اضافه می‌شود.
-    - extras (گام ۴): خروجی analysis.structure.analyze_structure؛ اگر داده
-      شود مؤلفه‌ی "structure" (تا ±۱۰) به امتیاز اضافه می‌شود — در این
-      حالت مقیاس امتیاز /۱۱۰ است، نه /۱۰۰. مسیر پیش‌فرض /۱۰۰ می‌ماند.
+    Additive parameters (all default to "off", and the default path exactly preserves
+    the previous behavior):
+    - higher_tf_direction (step 2): the higher-timeframe direction ("long"/"short");
+      if it opposes the candidate direction, the total score is multiplied by
+      MTF_CONFLICT_FACTOR and the "mtf" key is added to the output.
+    - apply_regime (step 3): if True, the components are scaled according to
+      classify_regime and the "regime" key is added.
+    - extras (step 4): the output of analysis.structure.analyze_structure; if provided,
+      the "structure" component (up to ±10) is added to the score — in this case the
+      score scale is /110, not /100. The default path remains /100.
     """
     ind = report["indicators"]
     price = ind["price"]
@@ -315,7 +322,7 @@ def score_candidate(df, report, symbol: str, timeframe: str,
     if abs(trend_signed) >= config.SCORE_TREND_WASH_THRESHOLD:
         direction = "long" if trend_signed > 0 else "short"
     else:
-        # روند خنثی است؛ جهت از علامت هیستوگرام MACD گرفته می‌شود
+        # The trend is neutral; the direction is taken from the sign of the MACD histogram
         hist = ind["macd"].get("histogram")
         if hist is not None and hist != 0:
             direction = "long" if hist > 0 else "short"
@@ -334,7 +341,7 @@ def score_candidate(df, report, symbol: str, timeframe: str,
                             else "stop_loss_short") or {}).get("recommended") or {}
     stop = stop_data.get("stop_loss")
 
-    # --- گام ۳: مقیاس رژیم (فقط با apply_regime=True؛ پیش‌فرض خاموش) ---
+    # --- Step 3: regime scaling (only with apply_regime=True; off by default) ---
     regime_name = None
     if apply_regime:
         regime_name = classify_regime(df, report)
@@ -354,7 +361,7 @@ def score_candidate(df, report, symbol: str, timeframe: str,
     }
     total = round(sum(components.values()), 1)
 
-    # دلیل یک‌خطی: دو مؤلفه‌ای که بیشترین سهم نسبی از سقف خودشان را گرفته‌اند
+    # One-line reason: the two components with the largest relative share of their own caps
     fragments = {
         "trend": "روند هم‌سو با EMA50/200" + (f" (ADX {ind['adx']})" if ind.get("adx") is not None else ""),
         "momentum": "مومنتوم هم‌جهت (MACD و RSI)",
@@ -372,14 +379,14 @@ def score_candidate(df, report, symbol: str, timeframe: str,
     top_fragments = [fragments[k] for k, v in ranked[:2] if v > 0 and fragments[k]]
     reason = "دلیل: " + (" + ".join(top_fragments) if top_fragments else "سیگنال مشخصی ندارد")
 
-    # --- گام ۴: مؤلفه‌ی ساختار (فقط وقتی extras داده شود؛ مقیاس /۱۱۰) ---
-    # بعد از محاسبه‌ی «دلیل» اضافه می‌شود تا منطق رتبه‌بندی دلیل (که فقط پنج
-    # مؤلفه‌ی اصلی را می‌شناسد) دست نخورد.
+    # --- Step 4: structure component (only when extras is provided; /110 scale) ---
+    # Added after the "reason" is computed, so the reason-ranking logic (which knows only the five
+    # main components) remains untouched.
     if extras is not None:
         components["structure"] = round(_structure_score(extras, direction), 1)
         total = round(total + components["structure"], 1)
 
-    # --- گام ۲: دروازه‌ی MTF (فقط وقتی جهت تایم‌فریم بالاتر داده شود) ---
+    # --- Step 2: MTF gate (only when a higher-timeframe direction is provided) ---
     mtf_info = None
     if higher_tf_direction is not None:
         conflict = higher_tf_direction != direction
@@ -410,20 +417,21 @@ def score_candidate(df, report, symbol: str, timeframe: str,
         result["regime"] = regime_name
     if extras is not None:
         result["structure"] = extras
-    # گام ۶: حجم پوزیشن — کلید افزودنی، محاسبه از همان ورود/حد ضرر موجود
+    # Step 6: position size — an additive key, calculated from the existing entry/stop
     result["sizing"] = _position_sizing(report, result["entry"], result["stop"])
     return result
 
 
 # ---------------------------------------------------------------------------
-# همبستگی آلت‌کوین با BTC (افزودنی — پورت از پک خارجی؛ فقط نمایشی/تحلیلی)
+# Altcoin correlation with BTC (additive — ported from an external pack; display/analysis only)
 # ---------------------------------------------------------------------------
 def _btc_corr_from_frames(alt_df, btc_df, window: int = 30):
     """
-    همبستگی پیرسونِ «بازده‌ها» (نه قیمت خام) بین بسته‌شدن‌های آلت و BTC روی
-    آخرین `window` بازده‌ی هم‌تراز. همبستگی روی قیمت خام به‌خاطر روند مشترک
-    گمراه‌کننده است. خروجی گرد‌شده به ۳ رقم، یا None اگر داده کافی نیست.
-    نزدیک ۱ یعنی آلت عملاً بتای BTC است؛ نزدیک ۰/منفی یعنی رفتار مستقل‌تر.
+    Pearson correlation of "returns" (not raw prices) between the alt and BTC closes
+    over the last `window` aligned returns. Correlation on raw prices is misleading
+    because of the shared trend. Returns the value rounded to 3 decimals, or None if
+    there is insufficient data. Near 1 means the alt is effectively a beta of BTC;
+    near 0/negative means more independent behavior.
     """
     try:
         joined = pd.DataFrame({"alt": alt_df["close"].astype(float),
@@ -442,13 +450,14 @@ def _btc_corr_from_frames(alt_df, btc_df, window: int = 30):
 
 def alt_btc_correlation(symbol: str, timeframe: str, window: int = 30):
     """
-    آخرین همبستگی بازده‌های `symbol` با BTC در همان تایم‌فریم (پنجره‌ی ۳۰).
-    برای خود BTC مقدار 1.0 برمی‌گردد. روی هر خطا (شبکه/داده‌ی ناکافی) None.
+    Latest correlation between the returns of `symbol` and BTC on the same timeframe
+    (window of 30). For BTC itself, returns 1.0. Returns None on any error
+    (network/insufficient data).
     """
     try:
         if symbol.upper() == "BTC":
             return 1.0
-        need = window + 60   # حاشیه برای هم‌ترازی زمانی و pct_change
+        need = window + 60   # Margin for time alignment and pct_change
         alt_df = analyzer.fetch_candles_binance(symbol, timeframe,
                                                 total_candles=need)
         btc_df = analyzer.fetch_candles_binance("BTC", timeframe,
@@ -459,24 +468,23 @@ def alt_btc_correlation(symbol: str, timeframe: str, window: int = 30):
 
 
 # ---------------------------------------------------------------------------
-# لایه‌ی تصمیم EV (افزودنی — analysis/ev.py)
+# EV decision layer (additive — analysis/ev.py)
 # ---------------------------------------------------------------------------
 def _ev_gate_annotation(cand: dict):
     """
-    حاشیه‌ی افزودنی دروازه‌ی EV واک‌فوروارد (برنامه‌ی بهبود، مرحله‌ی ۱ —
-    پذیرفته‌شده با حالت config.IMPROVE_GATE_MODE) روی کلید "ev_gate".
+    Additive annotation for the walk-forward EV gate (improvement program, stage 1 —
+    adopted with config.IMPROVE_GATE_MODE) on the "ev_gate" key.
 
-    فرم زنده‌ی دروازه: آمار «تحقق‌یافته‌ی دنباله‌ای» یک ترکیب همان
-    EV خارج‌نمونه‌ی کش است (از ماتریس نهایی پشته)؛ دروازه وقتی سرکوب
-    می‌کند که n ≥ IMPROVE_GATE_N_MIN و امید تحقق‌یافته زیر لبه باشد
-    (حالت on: ‎<۰‎؛ smooth: ‎<−۰٫۲R‎). این حاشیه اطلاعاتی است و تصمیم
-    واقعی را decide_candidate می‌گیرد — قواعد اجباری آن (نمونه‌ی ناکافی
-    ‎n<۱۰‎ → NO_TRADE و امید ‎≤۰‎ → NO_TRADE) در هر نقطه‌ای که دروازه
-    سرکوب می‌کند، از قبل همان NO_TRADE را می‌دهند (لایه‌ی زنده در بُعد
-    حجم نمونه سخت‌گیرتر از دروازه است: دروازه از ‎n≥۸‎ فعال می‌شود ولی
-    تصمیم خرید در لایه‌ی EV به ‎n≥۱۰‎ برای هر تصمیم و ‎n≥۳۰‎ برای
-    BUY/STRONG نیاز دارد). اختلاف این دو فرم در
-    IMPROVEMENT_PROGRAM_FA.md ثبت شده است.
+    The live form of the gate: a combination's "trailing realized" statistics are the
+    same as the cached out-of-sample EV (from the final stack matrix); the gate
+    suppresses when n ≥ IMPROVE_GATE_N_MIN and realized expectancy is below the edge
+    (on mode: < 0; smooth: < −0.2R). This annotation is informational, and
+    decide_candidate makes the actual decision — its mandatory rules (insufficient
+    sample n < 10 → NO_TRADE and expectancy ≤ 0 → NO_TRADE) already produce the same
+    NO_TRADE at every point where the gate suppresses (the live layer is stricter than
+    the gate on sample size: the gate activates from n ≥ 8, while the EV layer's buy
+    decision requires n ≥ 10 for any decision and n ≥ 30 for BUY/STRONG). The
+    difference between these two forms is recorded in IMPROVEMENT_PROGRAM_FA.md.
     """
     mode = getattr(config, "IMPROVE_GATE_MODE", None)
     if not mode:
@@ -494,15 +502,14 @@ def _ev_gate_annotation(cand: dict):
 
 def attach_ev_decision(cand: dict) -> dict:
     """
-    کلیدهای افزودنی "ev" و "decision"/"decision_fa"/"decision_reason" را
-    به یک نامزد اضافه می‌کند. EV فقط از کش/فایل‌های ذخیره‌شده خوانده
-    می‌شود (allow_compute=False) — این تابع هرگز بک‌تست اجرا نمی‌کند تا
-    اسکن و مسیرهای زنده کند نشوند. اگر نامزد از قبل هر دو کلید را داشته
-    باشد (مثلاً stub تست یا صدا‌زننده‌ی بالادستی)، دست نمی‌خورد.
-    روی هر خطا: ev=None و تصمیم NO_TRADE با دلیل صریح (fail-safe).
-    کلید افزودنی "ev_gate" (حاشیه‌ی دروازه‌ی مرحله‌ی ۱ برنامه‌ی بهبود)
-    در هر دو مسیر اضافه می‌شود؛ وقتی IMPROVE_GATE_MODE خالی باشد،
-    کلیدی اضافه نمی‌شود و رفتار دقیقاً قبلی است.
+    Add the additive "ev" and "decision"/"decision_fa"/"decision_reason" keys to a
+    candidate. EV is read only from the cache/saved files (allow_compute=False) — this
+    function never runs a backtest, so scans and live paths do not slow down. If the
+    candidate already has both keys (for example, a test stub or an upstream caller),
+    it is left untouched. On any error: ev=None and a NO_TRADE decision with an
+    explicit reason (fail-safe). The additive "ev_gate" key (annotation for stage 1
+    of the improvement program) is added on both paths; when IMPROVE_GATE_MODE is
+    empty, no key is added and the behavior is exactly as before.
     """
     _ev_gate_annotation(cand)
     if "ev" in cand and "decision" in cand:
@@ -526,12 +533,12 @@ def attach_ev_decision(cand: dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# لایه‌ی بازبینی LLM (افزودنی — analysis/llm_engine.py؛ LLM_LAYER_FA.md)
+# LLM review layer (additive — analysis/llm_engine.py; LLM_LAYER_FA.md)
 # ---------------------------------------------------------------------------
 def llm_layer_active() -> bool:
-    """True یعنی لایه‌ی LLM برای یک اسکن قابل استفاده است: پیش‌فرض کانفیگ
-    (LLM_ENABLED_DEFAULT) روشن باشد یا صدا‌زننده صریحاً روشنش کرده باشد،
-    و یک کلید NVIDIA resolve شود. بدون کلید همیشه False است."""
+    """True means the LLM layer can be used for a scan: the config default
+    (LLM_ENABLED_DEFAULT) is on or the caller explicitly enabled it, and an NVIDIA
+    key resolves. Without a key it is always False."""
     if not getattr(config, "LLM_ENABLED_DEFAULT", False):
         return False
     try:
@@ -543,20 +550,20 @@ def llm_layer_active() -> bool:
 def attach_llm_analysis(cand: dict, report_data_builder=None,
                         client=None) -> dict:
     """
-    بازبینی LLM را به‌صورت کلید افزودنی "llm" روی یک نامزد می‌نشاند و
-    همان نامزد را برمی‌گرداند (الگوی attach_ev_decision).
+    Attach the LLM review as the additive "llm" key on a candidate and return the
+    same candidate (the attach_ev_decision pattern).
 
-    گاردها (همه لازمه‌ی صدا شدن موتور):
-    - نامزد حتماً تصمیم EV دارد (attach_ev_decision قبلاً رویش رفته) و
-      تصمیمش NO_TRADE نیست — کف سخت: NO_TRADE یعنی صفر فراخوانی LLM
-      (موتور هم خودش همین کف را اعمال می‌کند؛ این‌جا گارد دوم است).
-    - اگر کلیدی resolve نشود یا موتور None بدهد (لایه غیرفعال)، هیچ
-      کلیدی اضافه نمی‌شود و نامزد دقیقاً مثل قبل برمی‌گردد.
-    - report_data_builder (اختیاری): تابعی که با خود نامزد صدا زده
-      می‌شود و «گزارش محاسباتی» اضافه برای پرامپت مدل می‌سازد؛ اگر
-      داده نشود، خود نامزد کل ورودی مدل است. خطای سازنده بی‌صدا رد
-      می‌شود (گزارش None) تا اسکن هرگز به‌خاطر آن نخوابد.
-    - روی هر خطای دیگر هم نامزد دست‌نخورده برمی‌گردد (fail-safe).
+    Guards (all required before the engine is called):
+    - The candidate must already have an EV decision (attach_ev_decision has run on
+      it) and its decision must not be NO_TRADE — hard floor: NO_TRADE means zero LLM
+      calls (the engine itself enforces the same floor; this is a second guard here).
+    - If no key resolves or the engine returns None (layer inactive), no key is added
+      and the candidate is returned exactly as before.
+    - report_data_builder (optional): a function called with the candidate itself
+      that builds extra "computed report" data for the model prompt; if not provided,
+      the candidate itself is the model's entire input. Builder errors are silently
+      ignored (report None) so a scan never stalls because of it.
+    - On any other error, the candidate is returned untouched (fail-safe).
     """
     if cand.get("decision") is None or cand.get("decision") == "NO_TRADE":
         return cand
@@ -578,18 +585,18 @@ def attach_llm_analysis(cand: dict, report_data_builder=None,
 
 def _attach_llm_to_scan(out: dict, enabled: bool, client=None) -> dict:
     """
-    گام LLM برای خروجی اسکن (داخلی؛ scan_market و scan_forex_market هر
-    دو از همین‌جا رد می‌شوند تا رفتار دقیقاً یکی باشد).
+    LLM step for scan output (internal; both scan_market and scan_forex_market pass
+    through here so the behavior is identical).
 
-    - enabled=False (پیش‌فرض همه‌ی مسیرها) → خروجی دست‌نخورده، بدون حتی
-      یک کلید اضافه.
-    - enabled=True ولی کلیدی resolve نمی‌شود → کلید "llm_summary" با
-      active=False و دلیل «کلید تنظیم نشده» اضافه می‌شود تا صدا‌زننده
-      (CLI) بتواند یک خط واضح چاپ کند؛ هیچ نامزدی کلید "llm" نمی‌گیرد.
-    - وگرنه حداکثر config.LLM_SCAN_TOP_K نامزدِ اولِ برشِ نمایشی که
-      تصمیمشان NO_TRADE نیست بازبینی می‌شوند و "llm_summary" شمارش
-      بازبینی‌شده‌ها و توزیع تصمیم‌های LLM را می‌آورد. هر خطای LLM فقط
-      همان نامزد را رد می‌کند؛ اسکن و بقیه‌ی نامزدها دقیقاً مثل قبل‌اند.
+    - enabled=False (the default for all paths) → output untouched, without even one
+      extra key.
+    - enabled=True but no key resolves → adds the "llm_summary" key with
+      active=False and the reason "key not configured", so the caller (CLI) can print
+      a clear line; no candidate receives an "llm" key.
+    - Otherwise, at most the first config.LLM_SCAN_TOP_K candidates in the display
+      slice whose decision is not NO_TRADE are reviewed, and "llm_summary" reports
+      the number reviewed and the distribution of LLM decisions. An LLM error skips
+      only that candidate; the scan and the other candidates remain exactly as before.
     """
     if not enabled:
         return out
@@ -626,7 +633,7 @@ def _attach_llm_to_scan(out: dict, enabled: bool, client=None) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# اسکن بازار
+# Market scan
 # ---------------------------------------------------------------------------
 def scan_market(symbols: list = None, timeframes: list = None,
                 limit: int = None, progress: bool = True,
@@ -637,48 +644,49 @@ def scan_market(symbols: list = None, timeframes: list = None,
                 llm: bool = False,
                 llm_client=None) -> dict:
     """
-    همه‌ی ترکیب‌های ارز × تایم‌فریم را اسکن و رتبه‌بندی می‌کند.
-    اگر یک ترکیب خطا بدهد (مثلاً نماد ناموجود)، خطا ثبت و اسکن ادامه پیدا می‌کند.
-    خروجی: {"candidates": [...مرتب‌شده نزولی، حداکثر limit تا],
-            "errors": [{"symbol","timeframe","error"}...], "scanned": تعداد موفق}
+    Scan and rank all symbol × timeframe combinations.
+    If one combination errors (for example, a nonexistent symbol), the error is
+    recorded and the scan continues.
+    Output: {"candidates": [...sorted descending, at most limit items],
+            "errors": [{"symbol","timeframe","error"}...], "scanned": successful count}
 
-    use_mtf (گام ۲): اگر True باشد، برای نامزدهای
-    4h جهت تایم‌فریم روزانه با همان امتیازدهی حساب و به‌عنوان دروازه‌ی MTF
-    به score_candidate داده می‌شود (جهت روزانه برای هر ارز یک بار گرفته و
-    در طول اسکن کش می‌شود). خطای گرفتن روزانه، نامزد را بدون دروازه نگه
-    می‌دارد و در errors با برچسب "1d (mtf)" ثبت می‌شود.
-    پیش‌فرض None = از config.IMPROVE_MTF_DEFAULT خوانده می‌شود (برنامه‌ی
-    بهبود، مرحله‌ی ۲: پذیرفته و True شد)؛ False صریح همیشه بر کانفیگ
-    غلبه می‌کند و رفتار قبلی را برمی‌گرداند.
+    use_mtf (step 2): if True, for 4h candidates the daily-timeframe direction is
+    computed with the same scoring and passed to score_candidate as the MTF gate
+    (the daily direction for each symbol is fetched once and cached during the scan).
+    An error while fetching the daily data leaves the candidate without a gate and is
+    recorded in errors with the label "1d (mtf)".
+    Default None = read from config.IMPROVE_MTF_DEFAULT (improvement program,
+    stage 2: adopted and set to True); an explicit False always overrides the config
+    and restores the previous behavior.
 
-    apply_regime (برنامه‌ی بهبود، مرحله‌ی ۲ — افزودنی): اگر True باشد،
-    مقیاس رژیم (گام ۳ score_candidate) روی نامزدها اعمال می‌شود.
-    پیش‌فرض None = از config.IMPROVE_REGIME_DEFAULT (پذیرفته‌شده: True)؛
-    False صریح = خاموش. جهت روزانه‌ی MTF عمداً «بدون» رژیم حساب می‌شود
-    — همان سمانتیک موتور ارزیابی مراحل (جهت پایپ‌لاین ساده‌ی روزانه) و
-    رفتار قبلی همین مسیر.
+    apply_regime (improvement program, stage 2 — additive): if True, regime scaling
+    (step 3 of score_candidate) is applied to candidates.
+    Default None = read from config.IMPROVE_REGIME_DEFAULT (adopted: True);
+    explicit False = off. The MTF daily direction is intentionally computed "without"
+    the regime — the same semantics as the stage evaluation engine (the simple daily
+    pipeline direction) and the previous behavior of this path.
 
-    include_btc_corr (افزودنی، پیش‌فرض False = رفتار قبلی): اگر True باشد،
-    هر نامزد کلید "btc_correlation" می‌گیرد (همبستگی بازده با BTC؛ برای
-    خود BTC برابر 1.0 و روی خطا None). دیتافریم BTC برای هر تایم‌فریم یک
-    بار گرفته و در طول اسکن کش می‌شود.
+    include_btc_corr (additive, default False = previous behavior): if True, each
+    candidate receives a "btc_correlation" key (correlation of returns with BTC; for
+    BTC itself it is 1.0, and None on error). The BTC dataframe for each timeframe is
+    fetched once and cached during the scan.
 
-    لایه‌ی EV (افزودنی، همیشه فعال ولی فقط‌خواندنی از کش): هر نامزد
-    کلیدهای "ev" و "decision"/"decision_fa"/"decision_reason" می‌گیرد و
-    خروجی کلید "decision_summary" (شمارش هر وضعیت روی همه‌ی ترکیب‌های
-    اسکن‌شده، قبل از برش limit) دارد. نامزدهای NO_TRADE هرگز بی‌صدا حذف
-    نمی‌شوند — با دلیل ردشان در لیست می‌مانند.
+    EV layer (additive, always active but read-only from the cache): each candidate
+    receives the "ev" and "decision"/"decision_fa"/"decision_reason" keys, and the
+    output has a "decision_summary" key (count of each status across all scanned
+    combinations, before the limit slice). NO_TRADE candidates are never silently
+    removed — they remain in the list with their rejection reason.
 
-    only_actionable (افزودنی، پیش‌فرض False): اگر True باشد، خروجی یک
-    کلید جدا به نام "actionable" هم دارد: فقط نامزدهایی که تصمیمشان
-    BUY/SELL/STRONG_* است (از کل اسکن، نه فقط برش limit). لیست اصلی
-    "candidates" در هر دو حالت کامل و بدون فیلتر پنهان است.
+    only_actionable (additive, default False): if True, the output also has a separate
+    "actionable" key: only candidates whose decision is BUY/SELL/STRONG_* (from the
+    whole scan, not just the limit slice). The main "candidates" list is complete and
+    without any hidden filter in both cases.
 
-    llm (افزودنی، پیش‌فرض False = خروجی دقیقاً مثل قبل): اگر True باشد و
-    کلید NVIDIA resolve شود، حداکثر config.LLM_SCAN_TOP_K نامزد اولِ
-    غیر NO_TRADE بازبینی LLM می‌گیرند (کلید "llm" روی نامزد + کلید
-    "llm_summary" روی خروجی — _attach_llm_to_scan). llm_client فقط برای
-    تست است (کلاینت جعلی)؛ در مسیر واقعی None می‌ماند.
+    llm (additive, default False = output exactly as before): if True and an NVIDIA
+    key resolves, at most the first config.LLM_SCAN_TOP_K non-NO_TRADE candidates
+    receive an LLM review ("llm" key on the candidate + "llm_summary" key on the
+    output — _attach_llm_to_scan). llm_client is for tests only (a fake client); in
+    the real path it remains None.
     """
     if symbols is None:
         symbols = config.SCAN_SYMBOLS
@@ -732,7 +740,7 @@ def scan_market(symbols: list = None, timeframes: list = None,
                                 df, btc_df_cache[timeframe])
                         except Exception:
                             cand["btc_correlation"] = None
-                # لایه‌ی EV: فقط از کش خوانده می‌شود، بک‌تست اجرا نمی‌شود
+                # EV layer: read from the cache only; no backtest is run
                 attach_ev_decision(cand)
                 results.append(cand)
             except Exception as exc:
@@ -742,7 +750,7 @@ def scan_market(symbols: list = None, timeframes: list = None,
                     print(f"  ⚠️ خطا در اسکن {symbol} {timeframe}: {exc}", flush=True)
 
     results.sort(key=lambda c: c["score"], reverse=True)
-    # خلاصه‌ی تصمیم روی همه‌ی ترکیب‌های اسکن‌شده (قبل از برش limit)
+    # Decision summary across all scanned combinations (before applying the limit slice)
     decision_summary = {}
     for c in results:
         d = c.get("decision", "NO_TRADE")
@@ -762,7 +770,7 @@ def scan_market(symbols: list = None, timeframes: list = None,
 
 
 # ---------------------------------------------------------------------------
-# اسکن فارکس (افزودنی — FOREX_FA.md؛ scan_market کریپتو دست نخورده است)
+# Forex scan (additive — FOREX_FA.md; the crypto scan_market is untouched)
 # ---------------------------------------------------------------------------
 def scan_forex_market(symbols: list = None, timeframes: list = None,
                       limit: int = None, progress: bool = True,
@@ -772,19 +780,19 @@ def scan_forex_market(symbols: list = None, timeframes: list = None,
                       llm: bool = False,
                       llm_client=None) -> dict:
     """
-    اسکن جفت‌های فارکس × [4h, 1d] با دقیقاً همان score_candidate و پشته‌ی
-    نهایی اسکن کریپتو (رژیم/MTF از همان پیش‌فرض‌های config، لایه‌ی EV
-    فقط‌خواندنی از کش). تفاوت‌ها فقط در منبع داده است
-    (analyzer.fetch_market با market="forex") و نبود همبستگی BTC.
-    ترکیب‌هایی که در کش EV ورودی ندارند (قبل از ماتریس فارکس) تصمیم
-    NO_TRADE با دلیل «نمونه ناکافی» می‌گیرند — رفتار درستِ پیش از ماتریس.
-    خروجی هم‌قالب scan_market است، به‌علاوه‌ی کلید "market": "forex".
-    XAUUSD در این اسکن نماینده‌ی کالا (طلا) است، نه جفت‌ارز.
+    Scan forex pairs × [4h, 1d] with exactly the same score_candidate and the final
+    crypto-scan stack (regime/MTF from the same config defaults, EV layer read-only
+    from the cache). The only differences are the data source
+    (analyzer.fetch_market with market="forex") and the absence of BTC correlation.
+    Combinations with no entry in the EV cache (before the forex matrix) receive a
+    NO_TRADE decision with the reason "insufficient sample" — the correct pre-matrix
+    behavior. The output has the same shape as scan_market, plus the
+    "market": "forex" key. XAUUSD in this scan represents a commodity (gold), not a
+    currency pair.
 
-    llm (افزودنی، پیش‌فرض False): دقیقاً همان سمانتیک scan_market —
-    بازبینی LLM فقط با llm=True و کلید resolveشده (به _attach_llm_to_scan
-    نگاه کنید). اولویت محصولی فعلی فارکس است، پس این مسیر مصرف‌کننده‌ی
-    اصلی لایه‌ی LLM است.
+    llm (additive, default False): exactly the same semantics as scan_market — LLM
+    review only with llm=True and a resolved key (see _attach_llm_to_scan). Forex is
+    the current product priority, so this path is the main consumer of the LLM layer.
     """
     if symbols is None:
         symbols = config.FOREX_SYMBOLS

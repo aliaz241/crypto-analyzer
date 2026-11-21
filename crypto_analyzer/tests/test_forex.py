@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
 """
 tests/test_forex.py
-تست آفلاین ماژول فارکس — بدون اینترنت:
+Offline test of the forex module — no internet:
 
     python tests/test_forex.py
 
-پوشش:
-۱) تجزیه‌ی .bi5 مصنوعی → تیک معلوم → کندل ساعتی معلوم (bid، حجم تیک،
-   مرتب‌سازی بر اساس ms، نقطه‌ی JPY).
-۲) resample به 4h/1d بدون ساخت کندل آخر هفته (شکاف‌ها می‌مانند).
-۳) مدل هزینه‌ی اسپردی و forex_trade_r با جواب دستی (EURUSD و XAUUSD).
-۴) مسیریابی: نماد فارکس → مسیر فارکس، نماد کریپتو → بایننس (mock)،
-   و scan_forex_market روی داده‌ی مصنوعی کش‌شده (تصمیم EV بدون ورودی
-   کش = NO_TRADE).
-۵) قیمت paper برای فارکس از latest_price می‌آید و پوزیشن فارکس فقط
-   دستی باز می‌شود.
-۶) تجزیه‌ی پاسخ Yahoo با mock (حذف ردیف None، حجم صفر، مسیریابی
-   get_candles به منبع اصلی).
+Coverage:
+1) Parsing a synthetic .bi5 → known ticks → a known hourly candle (bid, tick
+   volume, sorting by ms, the JPY point).
+2) Resampling to 4h/1d without making a weekend candle (gaps remain).
+3) The spread cost model and forex_trade_r with a hand-computed answer (EURUSD and XAUUSD).
+4) Routing: a forex symbol → the forex path, a crypto symbol → Binance (mock),
+   and scan_forex_market on synthetically cached data (an EV decision with no
+   cache input = NO_TRADE).
+5) The paper price for forex comes from latest_price and a forex position is
+   opened manually only.
+6) Parsing the Yahoo response with a mock (removing None rows, zero volume,
+   routing get_candles to the main source).
 """
 
 import lzma
@@ -52,10 +52,10 @@ def _tick(ms, ask_i, bid_i, av, bv):
 
 
 # ---------------------------------------------------------------------------
-# ۱) تجزیه و کندل ساعتی
+# 1) Parsing and the hourly candle
 # ---------------------------------------------------------------------------
 def test_parse_and_candle():
-    # عمداً نامرتب: ms دوم بزرگ‌تر از سومی نیست — مرتب‌سازی باید open/close را درست کند
+    # Deliberately unordered: the second ms is not larger than the third — sorting must fix open/close
     raw = (_tick(120000, 110030, 110020, 0.5, 0.5)
            + _tick(0, 110010, 110000, 1.0, 2.0)
            + _tick(60000, 109990, 109980, 1.5, 1.0))
@@ -76,7 +76,7 @@ def test_parse_and_candle():
 
 
 # ---------------------------------------------------------------------------
-# ۲) resample و شکاف آخر هفته
+# 2) Resample and the weekend gap
 # ---------------------------------------------------------------------------
 def test_resample_gaps():
     idx = pd.date_range("2026-11-06 00:00", periods=5, freq="1h", tz="UTC")
@@ -95,11 +95,11 @@ def test_resample_gaps():
 
 
 # ---------------------------------------------------------------------------
-# ۳) هزینه و R
+# 3) Cost and R
 # ---------------------------------------------------------------------------
 def test_cost_model():
     from backtest.forex_backtest import forex_cost_price, forex_trade_r
-    # EURUSD: اسپرد 1.0 + اسلیپیج 0.2 = 1.2 پیپ = 0.00012
+    # EURUSD: spread 1.0 + slippage 0.2 = 1.2 pips = 0.00012
     check("هزینه EURUSD", approx(forex_cost_price("EURUSD"), 0.00012),
           str(forex_cost_price("EURUSD")))
     # XAUUSD: (2.5 + 0.2) × 0.1 = 0.27
@@ -108,16 +108,16 @@ def test_cost_model():
     # USDJPY: (1.2 + 0.2) × 0.01 = 0.014
     check("هزینه USDJPY", approx(forex_cost_price("USDJPY"), 0.014),
           str(forex_cost_price("USDJPY")))
-    # لانگ: ورود 1.1000، خروج 1.1100، ریسک 0.0050 → (0.0100 − 0.00012)/0.005 = 1.976
+    # Long: entry 1.1000, exit 1.1100, risk 0.0050 → (0.0100 − 0.00012)/0.005 = 1.976
     r = forex_trade_r("long", 1.1000, 1.1100, 0.0050, "EURUSD")
     check("R لانگ با کسر اسپرد", approx(r, 1.976, 1e-9), str(r))
-    # شورت: ورود 1.1000، خروج 1.0950، ریسک 0.0050 → (0.005 − 0.00012)/0.005 = 0.976
+    # Short: entry 1.1000, exit 1.0950, risk 0.0050 → (0.005 − 0.00012)/0.005 = 0.976
     r2 = forex_trade_r("short", 1.1000, 1.0950, 0.0050, "EURUSD")
     check("R شورت با کسر اسپرد", approx(r2, 0.976, 1e-9), str(r2))
 
 
 # ---------------------------------------------------------------------------
-# ۴) مسیریابی + اسکن روی کش مصنوعی
+# 4) Routing + scan on a synthetic cache
 # ---------------------------------------------------------------------------
 def _synthetic_1h(symbol, hours=1600, seed=7):
     rng = np.random.default_rng(seed)
@@ -136,7 +136,7 @@ def test_routing_and_scan():
     import scanner
     from analysis import analyzer
 
-    # سقف‌های کوچک تا کش مصنوعی کافی باشد و هیچ واکشی شبکه‌ای رخ ندهد
+    # Small caps so the synthetic cache suffices and no network fetch occurs
     config.FOREX_CANDLES_PER_TIMEFRAME = {"4h": 120, "1d": 30, "1h": 500}
     fx._save_cached_1h("EURUSD", _synthetic_1h("EURUSD"))
     df = analyzer.fetch_market("EURUSD", "4h", market=None)
@@ -145,7 +145,7 @@ def test_routing_and_scan():
           and len(df) == 120,
           str(df.shape))
 
-    # کریپتو: مسیر بایننس با mock (نباید شبکه صدا زده شود)
+    # Crypto: the Binance path with a mock (the network must not be called)
     orig = analyzer.fetch_candles_binance
     try:
         analyzer.fetch_candles_binance = lambda s, t, total_candles=None: \
@@ -169,13 +169,13 @@ def test_routing_and_scan():
 
 
 # ---------------------------------------------------------------------------
-# ۵) paper فارکس
+# 5) Forex paper
 # ---------------------------------------------------------------------------
 def test_paper_forex():
     import paper_trading as paper
     fx._save_cached_1h("EURUSD", _synthetic_1h("EURUSD", hours=100))
-    # تازه‌سازی سبک latest_price در تست خاموش است تا شبکه صدا زده نشود
-    # (کش مصنوعی قدیمی است و وگرنه واکشی ساعت‌های اخیر تلاش می‌شود).
+    # The light latest_price refresh is off in the test so the network is not called
+    # (the synthetic cache is old and otherwise fetching the recent hours would be attempted).
     import data.forex_client as _fxc
     _saved_lp = _fxc.latest_price
     _fxc.latest_price = lambda s: (float(
@@ -208,7 +208,7 @@ def test_paper_forex():
 
 
 def test_yahoo_parse():
-    """۶) تجزیه‌ی پاسخ Yahoo (mock requests.get — بدون شبکه)."""
+    """6) Parsing the Yahoo response (mock requests.get — no network)."""
     import json as _json
 
     import data.forex_client as fxc

@@ -1,26 +1,27 @@
 # Crypto Analyzer
 
-ابزار تحلیل تکنیکال بازار کریپتو (و فارکس) با پایتون: اندیکاتورها، الگوهای
-کندلی و چارتی، بک‌تست، محاسبه‌ی EV و اسکنر چندنمادی + ربات تلگرام.
+A Python technical-analysis tool for the crypto (and forex) markets:
+indicators, candlestick and chart patterns, backtesting, EV calculation,
+and a multi-symbol scanner + Telegram bot.
 
-## راه‌اندازی
+## Setup
 
 ```bash
 pip install -r requirements.txt
 ```
 
-کلیدها و توکن را باید **خودت** بگذاری (در فایل `crypto_analyzer/config.py`):
+You must supply the keys and token **yourself** (in the file `crypto_analyzer/config.py`):
 
-- `BOT_TOKEN` در `crypto_analyzer/telegram_bot.py` — توکن ربات تلگرامت را از
-  [@BotFather](https://t.me/BotFather) بگیر و جایگزین کن.
-- `COINGECKO_API_KEY` — اختیاری، کلید CoinGecko خودت.
-- `NVIDIA_API_KEY` — اختیاری، فقط برای لایه‌ی LLM.
+- `BOT_TOKEN` in `crypto_analyzer/telegram_bot.py` — get your Telegram bot token from
+  [@BotFather](https://t.me/BotFather) and replace it.
+- `COINGECKO_API_KEY` — optional, your own CoinGecko key.
+- `NVIDIA_API_KEY` — optional, only for the LLM layer.
 
-## اجرا
+## Running
 
 ```bash
 python -m crypto_analyzer.scanner
 python -m crypto_analyzer.telegram_bot
 ```
 
-> این ابزار صرفاً برای تحلیل و آموزش است و توصیه‌ی مالی نیست.
+> This tool is for analysis and education only and is not financial advice.

@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
 """
 tests/test_llm_layer.py
-تست آفلاین لایه‌ی تصمیم LLM — بدون اینترنت، با کلاینت جعلی (FakeClient):
+Offline test of the LLM decision layer — no internet, with a fake client (FakeClient):
 
     python tests/test_llm_layer.py
 
-پوشش:
-۱) رأی اکثریت مدل اصلی (۳ اجرا، دماهای متفاوت).
-۲) تساوی آرا → فراخوانی مدل tiebreak و تصمیم آن.
-۳) اختلاف جهت کراس‌چک → تنزل یک پله به سمت WAIT + پرچم اختلاف.
-۴) اعتبارسنجی عددی: EV اختراع‌شده و سطح قیمتی اختراع‌شده رد می‌شوند.
-۵) کف سخت: نامزد NO_TRADE یعنی صفر فراخوانی LLM.
-۶) نبود کلید API → analyze_candidate مقدار None برمی‌گرداند (لایه غیرفعال).
-۷) JSON خراب: خطای پارس تمیز + مسیر fail-safe به WAIT با دلیل
-   llm_validation_failed وقتی خروجی معتبر کافی نیست.
-۸) ثابت‌ها: مدل tiebreak مدل راستی‌آزمایی‌شده است (نه kimi-k2.6 که
-   chat آن 404 می‌دهد) و V4 Pro بازنشسته هیچ‌جا ارجاع نشده است.
+Coverage:
+1) Majority vote of the primary model (3 runs, different temperatures).
+2) Vote tie → calling the tiebreak model and its decision.
+3) Cross-check direction disagreement → one-step downgrade toward WAIT + the disagreement flag.
+4) Numeric validation: an invented EV and an invented price level are rejected.
+5) Hard floor: a NO_TRADE candidate means zero LLM calls.
+6) No API key → analyze_candidate returns None (layer disabled).
+7) Broken JSON: a clean parse error + the fail-safe path to WAIT with reason
+   llm_validation_failed when there is not enough valid output.
+8) Constants: the tiebreak model is the verified model (not kimi-k2.6, whose
+   chat returns 404) and retired V4 Pro is not referenced anywhere.
 """
 
 import http.client
@@ -35,8 +35,8 @@ from analysis import llm_client
 
 
 # ---------------------------------------------------------------------------
-# داده‌ی نمونه — دقیقاً با همان فیلدهایی که score_candidate اسکنر و
-# attach_ev_decision تولید می‌کنند (نگاه کنید به scanner.py و analysis/ev.py)
+# Sample data — with exactly the same fields that the scanner's score_candidate and
+# attach_ev_decision produce (see scanner.py and analysis/ev.py)
 # ---------------------------------------------------------------------------
 def make_candidate(**overrides):
     cand = {
@@ -69,7 +69,7 @@ def make_candidate(**overrides):
 def make_content(decision="BUY", confidence=70, ev_r=0.472, price=2.5,
                  entry=2.5, stop=2.4, target=2.75, score=72.0,
                  win_rate=85.7):
-    """یک خروجی معتبر مدل، مطابق قرارداد خروجی llm_engine."""
+    """One valid model output, per the llm_engine output contract."""
     return json.dumps({
         "decision": decision,
         "confidence": confidence,
@@ -90,7 +90,7 @@ def make_content(decision="BUY", confidence=70, ev_r=0.472, price=2.5,
 
 
 class FakeClient:
-    """کلاینت جعلی: برای هر مدل یک صف پاسخ دارد و همه‌ی فراخوانی‌ها را ثبت می‌کند."""
+    """Fake client: has one response queue per model and records all calls."""
 
     def __init__(self, queues):
         self.queues = {m: list(v) for m, v in queues.items()}
@@ -131,7 +131,7 @@ class TestMajorityVote(unittest.TestCase):
         self.assertTrue(result["llm_validated"])
         self.assertFalse(result["llm_crosscheck_disagreement"])
         self.assertEqual(result["llm_crosscheck"], "BUY")
-        # اطمینان = میانگین هر سه اجرای معتبر
+        # Confidence = the mean of all three valid runs
         self.assertEqual(result["llm_confidence"], 70.0)
         self.assertEqual(client.call_count(P), 3)
         self.assertEqual(client.call_count(C), 1)
@@ -234,13 +234,13 @@ class TestHardFloorAndDisabled(unittest.TestCase):
 
 class TestFailSafePaths(unittest.TestCase):
     def test_all_invalid_outputs_return_wait(self):
-        bad = make_content("BUY", ev_r=9.99)  # هر سه اجرا عدد اختراعی دارند
+        bad = make_content("BUY", ev_r=9.99)  # All three runs have an invented number
         client = FakeClient({P: [bad] * 3, C: [make_content("BUY")]})
         result = llm_engine.analyze_candidate(make_candidate(), None, client)
         self.assertEqual(result["llm_decision"], "WAIT")
         self.assertEqual(result["llm_reason"], "llm_validation_failed")
         self.assertFalse(result["llm_validated"])
-        self.assertEqual(client.call_count(C), 0)  # کراس‌چک اصلاً صدا زده نمی‌شود
+        self.assertEqual(client.call_count(C), 0)  # The cross-check is not called at all
 
     def test_garbage_outputs_return_wait(self):
         client = FakeClient({P: ["خراب", "{ناقص", ""],
@@ -265,7 +265,7 @@ class TestModelConstants(unittest.TestCase):
                          "deepseek-ai/deepseek-v4.1-flash")
         self.assertEqual(llm_engine.LLM_CROSSCHECK_MODEL,
                          "nvidia/nemotron-3-ultra-550b-a55b")
-        # kimi-k2.6 در کاتالوگ لیست می‌شود ولی chat آن 404 می‌دهد — ممنوع
+        # kimi-k2.6 is listed in the catalog but its chat returns 404 — forbidden
         self.assertEqual(llm_engine.LLM_TIEBREAK_MODEL,
                          "mistralai/mistral-large-4-1t-a52b")
         self.assertEqual(llm_engine.LLM_SPARE_MODEL, "z-ai/glm-5.3-flash")
@@ -274,7 +274,7 @@ class TestModelConstants(unittest.TestCase):
                       llm_engine.LLM_TIEBREAK_MODEL,
                       llm_engine.LLM_SPARE_MODEL):
             self.assertNotIn("kimi", const)
-            self.assertNotIn("v4-pro", const)  # V4 Pro بازنشسته است
+            self.assertNotIn("v4-pro", const)  # V4 Pro is retired
 
     def test_prompt_uses_only_candidate_numbers(self):
         messages = llm_engine.build_analysis_prompt(make_candidate(), None)
@@ -303,11 +303,11 @@ class TestClientKeyResolution(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# تلاش مجددِ سطح انتقال در llm_client.chat — حمل‌ونقل جعلی (urlopen پچ‌شده)
-# اثبات‌ها: (۱) دو قطع اتصال + موفقیت = محتوا برمی‌گردد و دقیقاً ۳ تلاش،
-# (۲) 410 همان تلاش اول LLMRetiredError می‌دهد (دقیقاً ۱ تلاش)،
-# (۳) قطع اتصالِ ماندگار بعد از دقیقاً ۳ تلاش LLMError می‌دهد،
-# (۴) 5xx هم retry می‌شود، (۵) 4xx غیر 410 بدون retry پرتاب می‌شود.
+# Transport-level retry in llm_client.chat — fake transport (patched urlopen)
+# Proofs: (1) two disconnects + success = content returns with exactly 3 attempts,
+# (2) 410 raises LLMRetiredError on the very first attempt (exactly 1 attempt),
+# (3) a persistent disconnect raises LLMError after exactly 3 attempts,
+# (4) 5xx is also retried, (5) a non-410 4xx is raised without retry.
 # ---------------------------------------------------------------------------
 def _ok_payload(content="پاسخ سالم"):
     return {"choices": [{"message": {"content": content},
@@ -336,7 +336,7 @@ def _http_error(code):
 
 
 class _ScriptedTransport:
-    """urlopen جعلی: هر فراخوانی نتیجه‌ی بعدی صف را برمی‌گرداند/پرتاب می‌کند."""
+    """Fake urlopen: each call returns/raises the next result in the queue."""
 
     def __init__(self, outcomes):
         self.outcomes = list(outcomes)
@@ -353,7 +353,7 @@ class _ScriptedTransport:
 class TestClientTransportRetry(unittest.TestCase):
     def setUp(self):
         self.client = llm_client.LLMClient(api_key="YOUR_NVIDIA_API_KEY")
-        # مکث‌های واقعی ۱۰/۳۰ ثانیه‌ای در تست نباید اجرا شوند
+        # The real 10/30-second pauses must not run in the test
         sleep_patcher = mock.patch.object(llm_client.time, "sleep",
                                           lambda s: None)
         sleep_patcher.start()
@@ -385,7 +385,7 @@ class TestClientTransportRetry(unittest.TestCase):
 
     def test_persistent_disconnect_raises_after_three_attempts(self):
         transport = _ScriptedTransport(
-            [TimeoutError("timeout")] * 5)  # بیشتر از سقف تلاش‌ها
+            [TimeoutError("timeout")] * 5)  # More than the attempt cap
         with mock.patch.object(urllib.request, "urlopen", transport):
             with self.assertRaises(llm_client.LLMError) as ctx:
                 self.client.chat(P, [{"role": "user", "content": "x"}],

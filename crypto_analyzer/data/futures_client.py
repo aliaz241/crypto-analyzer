@@ -1,16 +1,16 @@
 """
 data/futures_client.py
-زمینه‌ی بازار مشتقه (فیوچرز) از اندپوینت‌های عمومی بایننس — ماژول افزودنی
-(گام ۵). فقط برای نمایش/اطلاع است و در هیچ امتیازدهی‌ای شرکت نمی‌کند.
+Derivatives (futures) market context from Binance's public endpoints — add-on
+module (step 5). For display/information only; it takes part in no scoring.
 
-داده‌ها:
-- نرخ فاندینگ فعلی (premiumIndex: lastFundingRate)
-- بهره‌ی باز (open interest) فعلی و تغییرش نسبت به ۲۴ ساعت قبل
-  (openInterestHist با period=1h و limit=25)
+Data:
+- Current funding rate (premiumIndex: lastFundingRate)
+- Current open interest and its change versus 24 hours ago
+  (openInterestHist with period=1h and limit=25)
 
-⚠️ اندپوینت‌های fapi از بعضی IP/منطقه‌ها مسدودند (451/403)؛ تابع اصلی
-get_derivatives_context روی «هر» خطایی None برمی‌گرداند تا نبودنش هیچ
-جریان دیگری را خراب نکند. بین دامنه‌ها fallback هست:
+⚠️ The fapi endpoints are blocked from some IPs/regions (451/403); the main
+function get_derivatives_context returns None on "any" error so that its
+absence breaks no other flow. There is fallback across domains:
 fapi.binance.com ← fapi1..4.binance.com
 """
 
@@ -33,7 +33,7 @@ FAPI_BASE_URLS = [
 
 
 class FuturesClient:
-    """کلاینت سبک فیوچرز؛ مثل BinanceClient بدون API key و با retry محدود."""
+    """Light futures client; like BinanceClient, with no API key and limited retry."""
 
     def __init__(self):
         self.base_urls = list(FAPI_BASE_URLS)
@@ -41,7 +41,7 @@ class FuturesClient:
         self.session = requests.Session()
 
     def _get_json(self, path: str, params: dict):
-        """اولین پاسخ 200 از بین دامنه‌ها؛ اگر هیچ‌کدام نشد، استثنا."""
+        """The first 200 response among the domains; if none works, an exception."""
         last_error = None
         for base in self.base_urls:
             try:
@@ -56,36 +56,37 @@ class FuturesClient:
         raise RuntimeError(f"دسترسی به فیوچرز بایننس ناموفق بود: {last_error}")
 
     def get_premium_index(self, symbol_usdt: str) -> dict:
-        """نرخ فاندینگ فعلی نماد (lastFundingRate به صورت کسر، مثلاً 0.0001)."""
+        """The symbol's current funding rate (lastFundingRate as a fraction, e.g. 0.0001)."""
         symbol = BinanceClient.normalize_symbol(symbol_usdt)
         return self._get_json("/fapi/v1/premiumIndex", {"symbol": symbol})
 
     def get_open_interest_hist(self, symbol_usdt: str, period: str = "1h",
                                limit: int = 25) -> list:
-        """تاریخچه‌ی بهره‌ی باز؛ هر عضو sumOpenInterest دارد."""
+        """Open interest history; each member has sumOpenInterest."""
         symbol = BinanceClient.normalize_symbol(symbol_usdt)
         return self._get_json("/futures/data/openInterestHist",
                               {"symbol": symbol, "period": period, "limit": limit})
 
     def get_ticker_24h(self, symbol_usdt: str) -> dict:
-        """آمار ۲۴ ساعته؛ priceChangePercent درصد تغییر قیمت ۲۴ ساعت است."""
+        """24-hour statistics; priceChangePercent is the 24-hour price change percent."""
         symbol = BinanceClient.normalize_symbol(symbol_usdt)
         return self._get_json("/fapi/v1/ticker/24hr", {"symbol": symbol})
 
 
 # ---------------------------------------------------------------------------
-# لایه‌ی تفسیر مشتقه (افزودنی — پورت از پک خارجی؛ توابع خالص، بدون شبکه)
+# Derivatives interpretation layer (add-on — ported from an external pack; pure functions, no network)
 # ---------------------------------------------------------------------------
-FUNDING_EXTREME_THRESHOLD_PCT = 0.05   # فاندینگ هر ۸ ساعت (%)؛ بالای این یعنی ازدحام
+FUNDING_EXTREME_THRESHOLD_PCT = 0.05   # Funding every 8 hours (%); above this means crowding
 
 
 def interpret_funding_rate(funding_rate_pct: float, threshold_pct: float = None) -> dict:
     """
-    تفسیر نرخ فاندینگ (ورودی به «درصد»، مثلاً 0.05 یعنی 0.05٪ در ۸ ساعت):
-    - مثبتِ بالا: لانگ‌ها شلوغ‌اند و به شورت‌ها پول می‌دهند — ریسک تسویه‌ی
-      آبشاری لانگ‌ها در اصلاح بالا می‌رود (احتیاطی/contrarian، نه نزولی قطعی).
-    - منفیِ پایین: شورت‌ها شلوغ‌اند — ریسک short-squeeze بالا می‌رود.
-    خروجی: {"label", "fa", "note"}
+    Interpretation of the funding rate (input in "percent", e.g. 0.05 means 0.05% per 8 hours):
+    - High positive: longs are crowded and pay the shorts — the risk of a
+      cascading liquidation of longs in a correction rises (cautionary/contrarian,
+      not definitively bearish).
+    - Low negative: shorts are crowded — the risk of a short squeeze rises.
+    Output: {"label", "fa", "note"}
     """
     if threshold_pct is None:
         threshold_pct = FUNDING_EXTREME_THRESHOLD_PCT
@@ -100,12 +101,12 @@ def interpret_funding_rate(funding_rate_pct: float, threshold_pct: float = None)
 
 def interpret_oi_price_relationship(price_change_pct: float, oi_change_pct: float) -> dict:
     """
-    ترکیب تغییر قیمت و تغییر بهره‌ی باز در یک بازه — سنجش «سلامت» حرکت:
-      قیمت ↑ + OI ↑ -> پول جدید وارد شده؛ روند قوی‌تر/معتبرتر
-      قیمت ↑ + OI ↓ -> short covering (بسته‌شدن شورت‌ها)؛ کم‌دوام‌تر
-      قیمت ↓ + OI ↑ -> پوزیشن شورت جدید؛ روند نزولی قوی‌تر
-      قیمت ↓ + OI ↓ -> خروج/لیکویید لانگ‌ها؛ کم‌دوام‌تر
-    خروجی: {"label", "fa"}
+    Combining price change and open-interest change over a window — measuring the "health" of the move:
+      price ↑ + OI ↑ -> new money has entered; a stronger/more valid trend
+      price ↑ + OI ↓ -> short covering (shorts closing); less durable
+      price ↓ + OI ↑ -> new short positions; a stronger bearish trend
+      price ↓ + OI ↓ -> longs exiting/liquidating; less durable
+    Output: {"label", "fa"}
     """
     price_up = price_change_pct > 0
     oi_up = oi_change_pct > 0
@@ -120,15 +121,15 @@ def interpret_oi_price_relationship(price_change_pct: float, oi_change_pct: floa
 
 def get_derivatives_context(symbol_usdt: str):
     """
-    خلاصه‌ی زمینه‌ی مشتقه برای نمایش:
-    {"funding_rate_pct": درصد نرخ فاندینگ فعلی,
-     "funding_bias_fa": تفسیر کوتاه فارسی,
-     "funding_interpretation": خروجی interpret_funding_rate (افزودنی),
-     "open_interest": بهره‌ی باز فعلی (به واحد خود ارز),
-     "oi_change_24h_pct": درصد تغییر بهره‌ی باز در ۲۴ ساعت اخیر یا None,
-     "price_change_24h_pct": درصد تغییر قیمت در ۲۴ ساعت اخیر یا None (افزودنی),
-     "oi_interpretation": خروجی interpret_oi_price_relationship یا None (افزودنی)}
-    روی هر خطایی (شبکه، مسدودی منطقه‌ای، نماد نامعتبر…) None برمی‌گرداند.
+    Summary of the derivatives context for display:
+    {"funding_rate_pct": percent of the current funding rate,
+     "funding_bias_fa": short Persian interpretation,
+     "funding_interpretation": output of interpret_funding_rate (add-on),
+     "open_interest": current open interest (in the currency's own unit),
+     "oi_change_24h_pct": percent change of open interest in the last 24 hours or None,
+     "price_change_24h_pct": percent change of price in the last 24 hours or None (add-on),
+     "oi_interpretation": output of interpret_oi_price_relationship or None (add-on)}
+    On any error (network, regional block, invalid symbol…) returns None.
     """
     try:
         client = FuturesClient()
@@ -151,9 +152,9 @@ def get_derivatives_context(symbol_usdt: str):
                     oi_change = round(
                         (oi_now / float(hist[0]["sumOpenInterest"]) - 1.0) * 100.0, 2)
         except Exception:
-            pass  # بهره‌ی باز اختیاری است؛ فاندینگ به‌تنهایی هم مفید است
+            pass  # Open interest is optional; funding alone is also useful
 
-        # تغییر قیمت ۲۴ ساعته (اختیاری) — برای تفسیر رابطه‌ی قیمت×بهره‌ی باز
+        # 24-hour price change (optional) — for interpreting the price×open-interest relationship
         price_change_24h = None
         try:
             t24 = client.get_ticker_24h(symbol_usdt)

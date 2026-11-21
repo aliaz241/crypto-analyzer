@@ -1,41 +1,41 @@
 """
-analysis/ev.py — لایه‌ی تصمیم بر پایه‌ی امید ریاضی (EV Decision Layer)
+analysis/ev.py — Decision layer based on expected value (EV Decision Layer)
 
-کاملاً افزودنی است: هیچ محاسبه‌ی موجودی (امتیاز اسکنر، بک‌تست، الگوها)
-تغییر نمی‌کند. این ماژول فقط «مصرف‌کننده»‌ی خروجی بک‌تست سیستمی است و
-برای هر ترکیب ارز/تایم‌فریم یک EV خالص می‌سازد و از روی آن + امتیاز فعلی
-اسکنر، وضعیت تصمیم (decision) تعیین می‌کند.
+Fully additive: no existing computation (scanner score, backtest, patterns)
+changes. This module is only a "consumer" of the system backtest output and,
+for each symbol/timeframe combination, builds a net EV and, from it + the
+scanner's current score, determines the decision state (decision).
 
-تعریف EV در این سیستم
+Definition of EV in this system
 ---------------------
-EV هر ترکیب = امید ریاضی (میانگین R) معاملات «خارج‌ازنمونه»
-(out-of-sample) بک‌تست سیستمیِ همان ترکیب، در آستانه‌ی امتیاز
-config.EV_BACKTEST_THRESHOLD (پیش‌فرض ۶۰). R ها در خود بک‌تست سیستمی
-بعد از کسر کارمزد رفت‌وبرگشت و اسلیپیج دو طرف حساب شده‌اند، پس این EV
-«خالص» است و هزینه‌ی جداگانه‌ای نباید از آن کم شود.
+The EV of each combination = the expected value (mean R) of the "out-of-sample"
+trades of that combination's system backtest, at the score threshold
+config.EV_BACKTEST_THRESHOLD (default 60). The R values are computed inside the
+system backtest itself after deducting round-trip fees and slippage on both
+sides, so this EV is "net" and no separate cost should be deducted from it.
 
-⚠️ فقط out-of-sample: آمار داخل‌نمونه (in-sample) همان داده‌ای است که
-قواعد روی آن شکل گرفته‌اند و برای تصمیم زنده بیش‌برازش است؛ این ماژول
-عمداً هرگز in-sample را نمی‌خواند — نه در مسیر فایل‌های ذخیره‌شده و نه
-در مسیر محاسبه‌ی تازه.
+⚠️ Out-of-sample only: in-sample statistics are the very data the rules were
+shaped on and are overfit for live decisions; this module deliberately never
+reads in-sample — neither on the saved-files path nor on the fresh-compute path.
 
-⚠️ محدودیت جهت (مهم و صادقانه): معاملات بک‌تست را خود پایپ‌لاین تولید
-کرده و جهت هر معامله را همان موقع انتخاب کرده است؛ پس آمار EV «عملکرد
-کلی پایپ‌لاین روی این ترکیب» است، نه آمار جدا برای لانگ و شورت. ما آمار
-به‌تفکیک جهت نداریم و وانمود نمی‌کنیم که داریم؛ جهت فعلی نامزد فقط از
-اسکنر می‌آید و EV به هر دو جهت یکسان اعمال می‌شود.
+⚠️ Direction limitation (important and honest): the backtest trades are produced
+by the pipeline itself, which chose each trade's direction at the time; so the
+EV statistics are "the pipeline's overall performance on this combination", not
+separate statistics for long and short. We do not have per-direction statistics
+and do not pretend we do; the candidate's current direction comes only from the
+scanner and EV is applied equally to both directions.
 
-منابع داده (به ترتیب اولویت در ev_for_candidate):
-۱) کش حافظه، ۲) کش دیسک (ev_cache.json کنار پکیج)،
-۳) فایل‌های نتیجه‌ی بک‌تست ذخیره‌شده (پوشه‌ی matrix/ کنار پکیج یا
-   btc4h_backtest_result.json) — از لیست معاملاتشان فقط segment="out"
-   خوانده می‌شود و همه‌ی معیارها (نرخ برد، میانگین برد/باخت، پروفیت
-   فاکتور، نرخ برد سربه‌سر) از همان R های واقعی دوباره حساب می‌شوند،
-۴) فقط وقتی allow_compute=True و هیچ‌کدام نبود: اجرای تازه‌ی
-   run_system_backtest و ذخیره در کش. مسیر اسکن (scan_market) همیشه با
-   allow_compute=False صدا می‌زند تا اسکن ۴۰ ترکیبی به ۴۰ بک‌تست تبدیل
-   نشود؛ بازنشانی کش صریح است: ev_for_candidate(..., refresh=True) یا
-   refresh_ev_cache(...) یا پرچم CLI ‏--refresh-ev در main.py.
+Data sources (in priority order in ev_for_candidate):
+1) in-memory cache, 2) disk cache (ev_cache.json next to the package),
+3) saved backtest result files (the matrix/ folder next to the package or
+   btc4h_backtest_result.json) — from their trade lists only segment="out"
+   is read and all metrics (win rate, average win/loss, profit factor,
+   break-even win rate) are recomputed from those same real R values,
+4) only when allow_compute=True and none of the above exist: a fresh run of
+   run_system_backtest, stored in the cache. The scan path (scan_market) always
+   calls with allow_compute=False so a 40-combination scan does not turn into
+   40 backtests; cache reset is explicit: ev_for_candidate(..., refresh=True) or
+   refresh_ev_cache(...) or the CLI flag --refresh-ev in main.py.
 """
 
 import json
@@ -51,7 +51,7 @@ import config
 _PACKAGE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CACHE_FILE = os.path.join(_PACKAGE_DIR, config.EV_CACHE_FILENAME)
 
-# کش حافظه: (SYMBOL, timeframe) -> ورودی کش (شامل r_values_oos)
+# In-memory cache: (SYMBOL, timeframe) -> cache entry (includes r_values_oos)
 _MEM_CACHE = {}
 
 _RELIABILITY_FA = {
@@ -73,7 +73,7 @@ ACTIONABLE_DECISIONS = ("STRONG_BUY", "STRONG_SELL", "BUY", "SELL")
 
 
 # ---------------------------------------------------------------------------
-# محاسبه‌ی EV از آمار/معاملات
+# Computing EV from statistics/trades
 # ---------------------------------------------------------------------------
 def _reliability(n: int) -> str:
     if n < config.EV_SAMPLE_INSUFFICIENT_MAX:
@@ -84,8 +84,8 @@ def _reliability(n: int) -> str:
 
 
 def _extract_r_values(stats) -> list:
-    """از ورودی‌های پشتیبانی‌شده لیست R استخراج می‌کند (بدون فیلتر segment؛
-    فیلتر خارج‌ازنمونه وظیفه‌ی صدا‌زننده است)."""
+    """Extracts the list of R values from supported inputs (without segment filtering;
+    out-of-sample filtering is the caller's job)."""
     if stats is None:
         return []
     if isinstance(stats, (list, tuple)):
@@ -120,21 +120,21 @@ def _extract_r_values(stats) -> list:
 
 def compute_ev(stats) -> dict:
     """
-    معیارهای EV را از یکی از این ورودی‌ها حساب می‌کند:
-    - لیست R ها (عدد یا دیکشنری معامله با کلید "r")
-    - دیکشنری با کلید "r_values" / "rs" / "trades"
-    - دیکشنری تجمیعی با کلیدهای win_rate (کسر ۰..۱) و avg_win_r و
-      avg_loss_r (قدرمطلق میانگین باخت) و n_trades
+    Computes EV metrics from one of these inputs:
+    - a list of R values (a number, or a trade dict with key "r")
+    - a dict with key "r_values" / "rs" / "trades"
+    - an aggregate dict with keys win_rate (fraction 0..1) and avg_win_r and
+      avg_loss_r (absolute value of the average loss) and n_trades
 
-    خروجی:
-      win_rate (کسر) + win_rate_pct، avg_win_r، avg_loss_r (قدرمطلق مثبت)،
-      expectancy_r (امید ریاضی خالص، همان میانگین R)، profit_factor
-      (سود ناخالص/|زیان ناخالص|؛ اگر باختی نباشد و سود باشد inf، اگر
-      سودی نباشد 0.0، اگر معامله‌ای نباشد None)،
-      break_even_win_rate = avg_loss / (avg_win + avg_loss) (کسر) + _pct،
-      n_trades، reliability و reliability_fa.
+    Output:
+      win_rate (fraction) + win_rate_pct, avg_win_r, avg_loss_r (positive absolute value),
+      expectancy_r (net expected value, i.e. the mean R), profit_factor
+      (gross profit/|gross loss|; inf if there is no loss but there is profit, 0.0
+      if there is no profit, None if there are no trades),
+      break_even_win_rate = avg_loss / (avg_win + avg_loss) (fraction) + _pct,
+      n_trades, reliability and reliability_fa.
     """
-    # مسیر تجمیعی آماده
+    # Ready aggregate path
     if isinstance(stats, dict) and "avg_win_r" in stats and "avg_loss_r" in stats \
             and "win_rate" in stats and "n_trades" in stats:
         n = int(stats["n_trades"])
@@ -206,7 +206,7 @@ def compute_ev(stats) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# کش دیسک
+# Disk cache
 # ---------------------------------------------------------------------------
 def _cache_key(symbol: str, timeframe: str) -> str:
     return f"{symbol.upper()}_{timeframe}"
@@ -259,19 +259,19 @@ def _entry_from_memory_or_disk(symbol: str, timeframe: str):
 
 
 # ---------------------------------------------------------------------------
-# فایل‌های نتیجه‌ی ذخیره‌شده (ماتریس / نتیجه‌ی تکی)
+# Saved result files (matrix / single result)
 # ---------------------------------------------------------------------------
 def _stored_result_paths(symbol: str, timeframe: str) -> list:
     sym = symbol.upper()
-    parent = os.path.dirname(_PACKAGE_DIR)   # پوشه‌ی crypto_analyzer_v2/
+    parent = os.path.dirname(_PACKAGE_DIR)   # The crypto_analyzer_v2/ folder
     paths = [
-        # ماتریس فارکس (افزودنی): برای نمادهای فارکس تنها منبع ذخیره‌شده
-        # همین است؛ برای کریپتو این فایل‌ها وجود ندارند و اثری ندارند.
+        # Forex matrix (add-on): for forex symbols this is the only saved source;
+        # for crypto these files do not exist and have no effect.
         os.path.join(parent, "matrix_forex", f"{sym}_{timeframe}.json"),
         os.path.join(_PACKAGE_DIR, "matrix_forex", f"{sym}_{timeframe}.json"),
-        # ماتریس نهاییِ برنامه‌ی بهبود (پشته‌ی نهایی) اول است: بعد از
-        # برنامه، رکورد معتبر هر ترکیب همین است؛ ماتریس اصلی فقط fallback
-        # تاریخی می‌ماند (اگر فایل نهایی نباشد).
+        # The final matrix of the improvement program (final stack) comes first: after
+        # the program, this is the valid record for each combination; the main matrix remains only as a
+        # historical fallback (if the final file does not exist).
         os.path.join(parent, "matrix_final", f"{sym}_{timeframe}.json"),
         os.path.join(_PACKAGE_DIR, "matrix_final", f"{sym}_{timeframe}.json"),
         os.path.join(parent, "matrix", f"{sym}_{timeframe}.json"),
@@ -284,11 +284,11 @@ def _stored_result_paths(symbol: str, timeframe: str) -> list:
 
 
 def _oos_r_values_from_result(result: dict):
-    """فقط معاملات segment="out" آستانه‌ی EV — هرگز in-sample."""
+    """Only the segment="out" trades of the EV threshold — never in-sample."""
     th = str(config.EV_BACKTEST_THRESHOLD)
     data = (result.get("thresholds") or {}).get(th)
     if data is None:
-        # آستانه‌ی مبنا در فایل نیست؛ به آستانه‌ی دیگری دست نمی‌زنیم.
+        # The base threshold is not in the file; we do not touch any other threshold.
         return None
     trades = data.get("trades") or []
     return [float(t["r"]) for t in trades
@@ -315,7 +315,7 @@ def _entry_from_stored_files(symbol: str, timeframe: str):
 
 
 def _entry_from_fresh_backtest(symbol: str, timeframe: str):
-    """اجرای تازه‌ی بک‌تست سیستمی (گران است؛ فقط با درخواست صریح)."""
+    """Fresh run of the system backtest (expensive; only on explicit request)."""
     from backtest.system_backtest import run_system_backtest
     result = run_system_backtest(
         symbol, timeframe,
@@ -328,20 +328,21 @@ def _entry_from_fresh_backtest(symbol: str, timeframe: str):
 
 
 # ---------------------------------------------------------------------------
-# API اصلی EV
+# Main EV API
 # ---------------------------------------------------------------------------
 def ev_for_candidate(symbol: str, timeframe: str, direction: str = None,
                      refresh: bool = False, allow_compute: bool = True):
     """
-    EV خالص خارج‌ازنمونه‌ی یک ترکیب ارز/تایم‌فریم را برمی‌گرداند
-    (خروجی compute_ev + فراداده). اگر هیچ منبعی نباشد و محاسبه هم مجاز
-    نباشد، None برمی‌گردد.
+    Returns the net out-of-sample EV of one symbol/timeframe combination
+    (compute_ev output + metadata). If no source exists and computation is not
+    allowed either, returns None.
 
-    direction پذیرفته می‌شود تا صدا‌زننده راحت باشد، ولی طبق محدودیت
-    مستندشده در docstring ماژول، آمار به‌تفکیک جهت نداریم: EV برای هر دو
-    جهت یکی است و کلید direction_specific=False این را صریح می‌گوید.
-    refresh=True کش و فایل‌های ذخیره‌شده را رد می‌کند و بک‌تست تازه
-    می‌گیرد (بازنشانی صریح کش).
+    direction is accepted for the caller's convenience, but per the limitation
+    documented in the module docstring, we have no per-direction statistics: EV is
+    the same for both directions and the key direction_specific=False states this
+    explicitly.
+    refresh=True skips the cache and saved files and takes a fresh backtest
+    (explicit cache reset).
     """
     entry = None
     if refresh:
@@ -368,8 +369,9 @@ def ev_for_candidate(symbol: str, timeframe: str, direction: str = None,
 
 def refresh_ev_cache(symbols: list, timeframes: list, progress: bool = True) -> dict:
     """
-    بازنشانی صریح کش EV: برای هر ترکیب بک‌تست تازه اجرا و در کش ذخیره
-    می‌شود (کند است — هر ترکیب حدود یک دقیقه). خروجی: خلاصه‌ی موفقیت/خطا.
+    Explicit EV cache reset: for each combination a fresh backtest is run and
+    stored in the cache (slow — about a minute per combination). Output: a
+    success/error summary.
     """
     done, failed = [], []
     for symbol in symbols:
@@ -388,26 +390,26 @@ def refresh_ev_cache(symbols: list, timeframes: list, progress: bool = True) -> 
 
 
 # ---------------------------------------------------------------------------
-# قواعد تصمیم
+# Decision rules
 # ---------------------------------------------------------------------------
 def decide_candidate(candidate: dict, ev: dict = None) -> dict:
     """
-    وضعیت تصمیم یک نامزد را از روی (امتیاز، جهت، حد ضرر/هدف، EV) تعیین
-    می‌کند. قواعد دقیق و قطعی (همه‌ی آستانه‌ها در config):
+    Determines a candidate's decision state from (score, direction, stop/target, EV).
+    Precise, deterministic rules (all thresholds in config):
 
-    ۱) حد ضرر یا هدف نباشد → NO_TRADE (نبود نقطه‌ی ابطال/هدف = رد اجباری)
-    ۲) EV موجود نباشد → NO_TRADE (بدون آمار خارج‌ازنمونه تصمیم نمی‌گیریم)
-    ۳) نمونه ناکافی (n < EV_SAMPLE_INSUFFICIENT_MAX) → NO_TRADE
-    ۴) EV خالص ≤ ۰ → NO_TRADE (رد اجباری؛ هر امتیازی را خنثی می‌کند)
-    ۵) امتیاز ≥ EV_STRONG_SCORE و EV > ۰ و نمونه «قابل اتکا» →
-       STRONG_BUY / STRONG_SELL (بر اساس جهت نامزد)
-    ۶) امتیاز ≥ EV_BUY_SCORE و EV > ۰ و نمونه «قابل اتکا» → BUY / SELL
-    ۷) بقیه‌ی حالت‌های EV > ۰ (امتیاز زیر آستانه‌ی خرید، یا نمونه «کم»
-       با امتیاز ≥ آستانه‌ی خرید) → WAIT (جهت محتمل است ولی شرایط کامل
-       نیست)
+    1) No stop loss or target → NO_TRADE (no invalidation point/target = mandatory rejection)
+    2) No EV available → NO_TRADE (we do not decide without out-of-sample statistics)
+    3) Insufficient sample (n < EV_SAMPLE_INSUFFICIENT_MAX) → NO_TRADE
+    4) Net EV ≤ 0 → NO_TRADE (mandatory rejection; overrides any score)
+    5) Score ≥ EV_STRONG_SCORE and EV > 0 and a "reliable" sample →
+       STRONG_BUY / STRONG_SELL (based on the candidate's direction)
+    6) Score ≥ EV_BUY_SCORE and EV > 0 and a "reliable" sample → BUY / SELL
+    7) All other EV > 0 cases (score below the buy threshold, or a "low"
+       sample with score ≥ the buy threshold) → WAIT (the direction is plausible
+       but the conditions are not complete)
 
-    خروجی: {"decision", "decision_fa", "decision_reason"} — دلیل همیشه
-    فارسی و صریح است، مخصوصاً برای NO_TRADE.
+    Output: {"decision", "decision_fa", "decision_reason"} — the reason is always
+    in Persian and explicit, especially for NO_TRADE.
     """
     if ev is None:
         ev = candidate.get("ev")
@@ -436,7 +438,7 @@ def decide_candidate(candidate: dict, ev: dict = None) -> dict:
         return out("NO_TRADE",
                    f"رد اجباری: امید ریاضی خالص خارج‌ازنمونه نامثبت است ({expectancy}R ≤ 0) — "
                    "امتیاز بالا این رد را خنثی نمی‌کند.")
-    # از اینجا EV > 0 با نمونه‌ی حداقل «کم» داریم.
+    # From here on we have EV > 0 with at least a 'low' sample.
     if ev.get("reliability") == "ok" and score >= config.EV_STRONG_SCORE:
         dec = "STRONG_BUY" if direction == "long" else "STRONG_SELL"
         return out(dec,
@@ -457,13 +459,13 @@ def decide_candidate(candidate: dict, ev: dict = None) -> dict:
 
 
 def format_ev_fa(ev: dict) -> str:
-    """یک خط فارسی آماده‌ی نمایش برای آمار EV (یا پیام نبود آن)."""
+    """A ready-to-display Persian line for the EV statistics (or a message that they are absent)."""
     if ev is None:
         return "EV: موجود نیست (کش EV خالی)"
     if ev.get("expectancy_r") is None:
-        # ورودی کش با صفر معامله (مثلاً ترکیب تازه‌ی فارکس قبل از این‌که
-        # بک‌تستش معامله‌ای بسازد): آماری برای نمایش نیست؛ قبل از این گارد،
-        # قالب‌بندی :+ روی None می‌ترکید (باگ نمایش، نه محاسبه).
+        # Cache entry with zero trades (e.g. a fresh forex combination before its
+        # backtest produces any trade): there are no statistics to show; before this guard,
+        # the :+ formatting crashed on None (a display bug, not a computation bug).
         return (f"EV: هنوز معامله‌ی خارج‌ازنمونه‌ای برای این ترکیب ثبت "
                 f"نشده است (نمونه: {ev.get('n_trades', 0)} معامله — "
                 f"{ev.get('reliability_fa', 'نمونه ناکافی')})")

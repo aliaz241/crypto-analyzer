@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
 main.py
-ابزار خط‌فرمان تحلیل تکنیکال ارز دیجیتال (نسخه‌ی ۲).
+Command-line tool for cryptocurrency technical analysis (version 2).
 
-استفاده:
-    python main.py                       (منوی شماره‌دار فارسی)
+Usage:
+    python main.py                       (numbered Persian menu)
     python main.py --symbol btc --timeframe 4h
-    python main.py --symbol btc --timeframe 1d --chart   (همراه تصویر نمودار)
-    python main.py --scan                (اسکن بازار و پیشنهاد امروز)
+    python main.py --symbol btc --timeframe 1d --chart   (with chart image)
+    python main.py --scan                (market scan and today's suggestion)
     python main.py --symbol bitcoin --vs usd --timeframe 4h --source coingecko
 """
 
@@ -159,7 +159,7 @@ def print_report(report: dict):
 
 
 def _fmt_price(value, decimals=4):
-    """مثل _fmt ولی برای قیمت‌های خیلی کوچک (مثل PEPE) رقم معنادار نشان می‌دهد."""
+    """Like _fmt, but for very small prices (such as PEPE) it shows significant digits."""
     if value is None:
         return "—"
     if 0 < abs(value) < 0.01:
@@ -168,9 +168,9 @@ def _fmt_price(value, decimals=4):
 
 
 def _ev_part(c) -> str:
-    """بخش EV خط رتبه‌بندی اسکن؛ برای ورودی کشِ بدون معامله (expectancy
-    خالی، مثل ترکیب‌های تازه‌ی فارکس) قالب‌بندی :+ روی None می‌ترکید —
-    این‌جا امن شده و فقط وقتی EV عددی هست بخش اضافه می‌شود."""
+    """EV portion of the scan ranking line; for a no-trade cache entry (empty
+    expectancy, such as new forex combinations), formatting with :+ would crash on
+    None — it is made safe here, and the section is added only when EV is numeric."""
     ev = c.get("ev")
     if not ev or ev.get("expectancy_r") is None:
         return ""
@@ -178,7 +178,7 @@ def _ev_part(c) -> str:
 
 
 def _analyze(symbol, vs, timeframe, source):
-    """داده را از منبع انتخابی می‌گیرد و (df, report) برمی‌گرداند."""
+    """Fetch data from the selected source and return (df, report)."""
     if source == "binance":
         df = fetch_candles_binance(symbol, timeframe)
     elif source in ("forex", "market"):
@@ -191,7 +191,7 @@ def _analyze(symbol, vs, timeframe, source):
 
 
 def _render_and_announce(df, report):
-    """نمودار را رسم و مسیر فایل ذخیره‌شده را چاپ می‌کند."""
+    """Render the chart and print the saved file path."""
     import charting
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{report['symbol'].upper()}_{report['timeframe']}_{ts}.png"
@@ -202,7 +202,7 @@ def _render_and_announce(df, report):
 
 
 def _print_llm_block(c, indent=""):
-    """بلوک نمایشی افزودنی بازبینی LLM برای یک نامزد (فقط اگر کلید llm داشته باشد)."""
+    """Additive display block for a candidate's LLM review (only if it has an llm key)."""
     llm = c.get("llm")
     if not llm:
         return
@@ -219,7 +219,7 @@ def _print_llm_block(c, indent=""):
 
 
 def _print_llm_summary(result):
-    """یک خط وضعیت لایه‌ی LLM برای خروجی اسکن (فقط وقتی با --llm اجرا شده)."""
+    """One status line for the LLM layer in scan output (only when run with --llm)."""
     summary = result.get("llm_summary")
     if summary is None:
         return
@@ -233,10 +233,11 @@ def _print_llm_summary(result):
 
 def _run_llm_single(symbol, timeframe, source):
     """
-    تحلیل عمیق تک‌نماد با --llm: همان امتیازدهی/لایه‌ی EV اسکنر روی همان
-    نماد/تایم‌فریم، بعد بازبینی LLM (فقط اگر نماد از دروازه‌ی EV رد شود).
-    اگر کلیدی تنظیم نشده باشد، یک خط واضح چاپ و خروجی عادی همین مسیر
-    برمی‌گردد. روی هر خطای LLM، خروجی عادی بدون بلوک LLM چاپ می‌شود.
+    In-depth single-symbol analysis with --llm: the scanner's same scoring/EV layer
+    on the same symbol/timeframe, followed by an LLM review (only if the symbol
+    passes the EV gate). If no key is configured, a clear line is printed and this
+    path's normal output is returned. On any LLM error, the normal output is printed
+    without the LLM block.
     """
     import scanner
     from analysis import ev as ev_mod
@@ -270,7 +271,7 @@ def _run_llm_single(symbol, timeframe, source):
 
 
 def _run_scan(llm=False):
-    """اسکن بازار، چاپ جدول رتبه‌بندی و جزئیات پیشنهاد اول + نمودارش."""
+    """Market scan; print the ranking table and the top pick's details + its chart."""
     import scanner
     from analysis import ev as ev_mod
     print("\nدر حال اسکن بازار (منبع: بایننس) ...")
@@ -348,7 +349,7 @@ def _run_scan(llm=False):
 
 
 # ---------------------------------------------------------------------------
-# منوی شماره‌دار (اجرای بدون آرگومان)
+# Numbered menu (running with no arguments)
 # ---------------------------------------------------------------------------
 def _fa_digits_to_en(text: str) -> str:
     return text.translate(str.maketrans("۱۲۳۴۵۶۷۸۹۰", "1234567890"))
@@ -378,10 +379,10 @@ def _menu_single():
 
 
 def _menu_paper():
-    """زیرمنوی معاملات کاغذی (صرافی فرضی) — حساب CLI با کلید «cli».
+    """Paper-trading submenu (hypothetical exchange) — CLI account with the key "cli".
 
-    منطق در paper_trading.py است؛ اینجا فقط پوسته‌ی خط‌فرمان است و فقط
-    حالت دستی دارد (بدون حالت خودکار). در ورود، موتور ارزیابی اجرا می‌شود.
+    The logic is in paper_trading.py; this file is only the command-line shell and
+    supports manual mode only (no auto mode). On entry, the evaluation engine runs.
     """
     import paper_trading as paper
     chat_id = "cli"
@@ -431,7 +432,7 @@ def _menu_paper():
 
 
 def _run_forex_scan(llm=False):
-    """اسکن فارکس (افزودنی): همان قالب خروجی اسکن کریپتو، بازار فارکس."""
+    """Forex scan (additive): the same output format as the crypto scan, for the forex market."""
     import scanner
     from analysis import ev as ev_mod
     print("\nدر حال اسکن بازار فارکس (منبع: Yahoo Finance — پشتیبان: Dukascopy) ...")

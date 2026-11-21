@@ -1,50 +1,59 @@
-# ابزار تحلیل تکنیکال ارز دیجیتال — نسخه‌ی ۲
+# Cryptocurrency Technical Analysis Tool — Version 2
 
-ابزار خط‌فرمان (CLI) برای تحلیل تکنیکال خودکار جفت‌ارزهای کریپتو: اندیکاتورها،
-الگوهای کندلی و نموداری، سطوح حمایت/مقاومت، پیشنهاد حد ضرر، و مهم‌تر از همه —
-**نرخ موفقیت تاریخی** هر الگو بر پایه‌ی بک‌تست روی داده‌ی واقعی گذشته.
+A command-line (CLI) tool for automated technical analysis of crypto pairs:
+indicators, candlestick and chart patterns, support/resistance levels,
+stop-loss suggestions, and most importantly — the **historical success rate**
+of each pattern, based on backtesting over real past data.
 
-## 🆕 نسخه‌ی ۲ چه چیزهایی اضافه کرده؟
+## 🆕 What does version 2 add?
 
-- **منبع داده‌ی بایننس (پیش‌فرض):** کندل‌های بومی هر تایم‌فریم مستقیم از
-  اندپوینت عمومی بایننس — **بدون نیاز به هیچ API key**. تاریخچه‌ی بلند
-  (۱H: ۱۵۰۰ کندل، 4H: ۱۵۰۰، 1D: ۱۰۰۰، 1W: ۴۰۰) و حجم معاملات واقعی صرافی.
-  مسیر کوین‌گکو نسخه‌ی ۱ با `--source coingecko` همچنان به‌عنوان جایگزین هست.
-- **اسکنر بازار و پیشنهاد امروز:** ۲۰ ارز × ۲ تایم‌فریم (4h و 1d) اسکن و با یک
-  امتیاز شفاف ۰ تا ۱۰۰ (روند، مومنتوم، الگو، سودبه‌ریسک، حجم) رتبه‌بندی
-  می‌شوند و بهترین نامزد با دلیل، حد ضرر و هدف پیشنهاد می‌شود.
-- **تصویر نمودار (PNG):** نمودار کندلی با EMA20/50، باند بولینگر، خطوط
-  حمایت/مقاومت و حد ضررها در پوشه‌ی `charts/` ذخیره می‌شود.
-- **منوی شماره‌دار فارسی:** اجرای بدون آرگومان، یک منوی ساده می‌آورد.
-- **رفع ایرادهای ممیزی نسخه‌ی ۱:** الگوهای نموداری (دوقلو/سر و شانه/مثلث/گوه)
-  فقط بعد از **شکست خط گردن/مرز** «کامل‌شده» حساب می‌شوند؛ حمایت/مقاومت فقط از
-  ۲۵۰ کندل اخیر ساخته می‌شود؛ MACD در همه‌ی تایم‌فریم‌ها کامل حساب می‌شود
-  (چون تاریخچه دیگر کوتاه نیست)؛ خطاهای بایننس با پیام واقعی و بدون تلاش
-  مجدد بیهوده برگردانده می‌شوند.
+- **Binance data source (default):** native candles for each timeframe
+  straight from Binance's public endpoint — **no API key needed**. Long
+  history (1H: 1500 candles, 4H: 1500, 1D: 1000, 1W: 400) and real exchange
+  trading volume. The version 1 CoinGecko path is still available as a
+  fallback with `--source coingecko`.
+- **Market scanner and today's suggestion:** 20 coins × 2 timeframes (4h and
+  1d) are scanned and ranked with a transparent score from 0 to 100 (trend,
+  momentum, pattern, reward-to-risk, volume), and the best candidate is
+  suggested with its reasoning, stop loss and target.
+- **Chart image (PNG):** a candlestick chart with EMA20/50, Bollinger Bands,
+  support/resistance lines and stop losses is saved in the `charts/` folder.
+- **Persian numbered menu:** running it with no arguments brings up a simple
+  menu.
+- **Fixes for the version 1 audit findings:** chart patterns
+  (double/head-and-shoulders/triangle/wedge) only count as "completed" after
+  a **break of the neckline/boundary**; support/resistance is built only from
+  the last 250 candles; MACD is fully computed on all timeframes (since the
+  history is no longer short); Binance errors are returned with the real
+  message and without pointless retries.
 
-## ⚠️ قبل از هر چیز بخوان
+## ⚠️ Read this first
 
-- این ابزار **پیش‌بینی قیمت نمی‌کند**. درصدهایی که نشان می‌دهد («فلان الگو تاریخاً
-  X% موفق بوده») آمار گذشته‌اند، نه تضمین آینده. بازار می‌تواند رفتارش عوض شود.
-- وقتی کنار یک الگو نوشته `⚠️ نمونه کم`، یعنی تعداد رخداد تاریخی آن‌قدر کم بوده
-  (کمتر از ۱۰ بار) که عدد درصد عملاً بی‌معناست — به آن اعتماد نکن.
-- این ابزار مشاور مالی نیست و نباید جایگزین تصمیم‌گیری خودت باشد.
+- This tool **does not predict prices**. The percentages it shows ("such-and
+  such pattern has historically succeeded X% of the time") are statistics
+  from the past, not a guarantee of the future. The market can change its
+  behavior.
+- When you see `⚠️ نمونه کم` next to a pattern, it means the number of
+  historical occurrences was so small (fewer than 10) that the percentage
+  figure is effectively meaningless — do not trust it.
+- This tool is not a financial advisor and should not replace your own
+  decision-making.
 
-## قابلیت‌ها
+## Features
 
-| بخش | شامل |
+| Section | Includes |
 |---|---|
-| **اندیکاتورها** | SMA, EMA, MACD, ADX (روند) \| RSI, Stochastic, CCI, Williams %R (مومنتوم) \| Bollinger, ATR, Keltner (نوسان) \| OBV (حجم) — همه در گزارش CLI نمایش داده می‌شوند |
-| **سطوح** | Fibonacci Retracement/Extension, Pivot Points, Support/Resistance خودکار (بر پایه‌ی swing) |
-| **کندل‌شناسی** | ۲۱ الگو — Doji, Hammer, Engulfing, Harami, Morning/Evening Star, Three White Soldiers و... |
-| **الگوی نموداری** | Double Top/Bottom, Head & Shoulders (و معکوس), مثلث (صعودی/نزولی/متقارن), گوه (صعودی/نزولی) |
-| **ریسک** | حد ضرر بر پایه‌ی ATR و بر پایه‌ی ساختار قیمت (آخرین سقف/کف) |
-| **بک‌تست** | برای هر الگو، نرخ موفقیت تاریخی را روی کل داده‌ی موجود محاسبه می‌کند |
-| **منبع داده** | Binance Public API (پیش‌فرض نسخه‌ی ۲، بدون API key) + CoinGecko (جایگزین، با `--source coingecko`) |
-| **اسکنر بازار** | اسکن ۲۰ ارز در ۲ تایم‌فریم، امتیازدهی ۰ تا ۱۰۰ و پیشنهاد بهترین نامزد (`--scan`) |
-| **نمودار تصویری** | خروجی PNG از نمودار با اندیکاتورها و سطوح (`--chart` یا از منو) |
+| **Indicators** | SMA, EMA, MACD, ADX (trend) \| RSI, Stochastic, CCI, Williams %R (momentum) \| Bollinger, ATR, Keltner (volatility) \| OBV (volume) — all shown in the CLI report |
+| **Levels** | Fibonacci Retracement/Extension, Pivot Points, automatic Support/Resistance (based on swings) |
+| **Candlestick patterns** | 21 patterns — Doji, Hammer, Engulfing, Harami, Morning/Evening Star, Three White Soldiers, etc. |
+| **Chart patterns** | Double Top/Bottom, Head & Shoulders (and inverse), Triangle (ascending/descending/symmetrical), Wedge (rising/falling) |
+| **Risk** | Stop loss based on ATR and based on price structure (last high/low) |
+| **Backtest** | For each pattern, computes the historical success rate over all available data |
+| **Data source** | Binance Public API (version 2 default, no API key) + CoinGecko (fallback, with `--source coingecko`) |
+| **Market scanner** | Scans 20 coins on 2 timeframes, scores 0 to 100 and suggests the best candidate (`--scan`) |
+| **Chart image** | PNG output of the chart with indicators and levels (`--chart` or from the menu) |
 
-## نصب (ترموکس / اندروید)
+## Installation (Termux / Android)
 
 ```bash
 pkg update && pkg upgrade
@@ -52,28 +61,28 @@ pkg install python
 pip install -r requirements.txt
 ```
 
-اگر نصب `pandas`/`numpy` با pip کند بود یا خطای کامپایل داد، این را امتحان کن:
+If installing `pandas`/`numpy` with pip is slow or gives a compile error, try this:
 ```bash
 pkg install python-numpy python-pandas
 ```
 
-## نصب (لینوکس / ویندوز / مک)
+## Installation (Linux / Windows / Mac)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## استفاده
+## Usage
 
-### منوی شماره‌دار (بدون آرگومان):
+### Numbered menu (no arguments):
 ```bash
 python main.py
 ```
-منو سه گزینه دارد: ۱) تحلیل یک ارز (نماد و تایم‌فریم را می‌پرسد؛ پیش‌فرض‌ها
-BTC و 4h — گزارش چاپ و تصویر نمودار هم ذخیره می‌شود) ۲) اسکن بازار و پیشنهاد
-امروز ۳) خروج.
+The menu has three options: 1) Analyze one coin (asks for the symbol and
+timeframe; defaults are BTC and 4h — the report is printed and the chart
+image is also saved) 2) Market scan and today's suggestion 3) Exit.
 
-### با آرگومان مستقیم:
+### With direct arguments:
 ```bash
 python main.py --symbol btc --timeframe 4h
 python main.py --symbol btc --timeframe 1d --chart
@@ -82,113 +91,125 @@ python main.py -s doge -t 1h
 python main.py --symbol bitcoin --vs usd --timeframe 4h --source coingecko
 ```
 
-- منبع داده‌ی پیش‌فرض **بایننس** است (`--source binance`)؛ جفت‌ها USDT هستند و
-  نماد را می‌توان به هر شکل نوشت: `btc`، `BTC`، `BTCUSDT`، `BTC/USDT`.
-- `--chart` تصویر نمودار را در پوشه‌ی `charts/` ذخیره و مسیرش را چاپ می‌کند.
-- `--scan` بدون منو همان اسکن بازار را اجرا می‌کند: جدول ۵ نامزد برتر، جزئیات
-  پیشنهاد اول و نمودارش. اسکن کامل ۴۰ ترکیب حدود ۱٫۵ تا ۲ دقیقه طول می‌کشد.
+- The default data source is **Binance** (`--source binance`); pairs are USDT
+  and the symbol can be written in any form: `btc`, `BTC`, `BTCUSDT`,
+  `BTC/USDT`.
+- `--chart` saves the chart image in the `charts/` folder and prints its
+  path.
+- `--scan` runs the same market scan without the menu: a table of the top 5
+  candidates, the details of the first suggestion and its chart. A full scan
+  of 40 combinations takes about 1.5 to 2 minutes.
 
-تایم‌فریم‌های پشتیبانی‌شده: `1h`, `4h`, `1d`, `1w`
+Supported timeframes: `1h`, `4h`, `1d`, `1w`
 
-### امتیاز اسکنر چطور حساب می‌شود؟
-| مؤلفه | سقف | منطق |
+### How is the scanner score computed?
+| Component | Cap | Logic |
 |---|---|---|
-| روند | ۲۵ | هم‌ترازی قیمت با EMA50/EMA200، مقیاس‌شده با ADX — علامتش جهت (لانگ/شورت) را تعیین می‌کند |
-| مومنتوم | ۲۰ | هم‌جهتی MACD + RSI در ناحیه‌ی سالم همان جهت (اشباع افراطی جریمه دارد) |
-| الگو | ۲۵ | نرخ موفقیت بک‌تست بهترین الگوی تأییدشده‌ی اخیر، روی همان ارز/تایم‌فریم |
-| سودبه‌ریسک | ۲۰ | فاصله تا اولین سطح مقابل تقسیم بر فاصله تا حد ضرر |
-| حجم | ۱۰ | هم‌جهتی روند OBV با جهت |
+| Trend | 25 | Alignment of price with EMA50/EMA200, scaled by ADX — its sign determines the direction (long/short) |
+| Momentum | 20 | MACD + RSI pointing the same way in the healthy zone for that direction (extremes are penalized) |
+| Pattern | 25 | Backtest success rate of the best recent confirmed pattern, on the same coin/timeframe |
+| Reward-to-risk | 20 | Distance to the first opposing level divided by distance to the stop loss |
+| Volume | 10 | OBV trend pointing the same way as the direction |
 
-همه‌ی وزن‌ها و ثابت‌ها در `config.py` (بخش Scanner) هستند و قابل تغییرند.
+All weights and constants are in `config.py` (the Scanner section) and can be
+changed.
 
-### تست آفلاین (بدون اینترنت، بدون برخورد با rate limit کوین‌گکو):
-برای دیدن سریع ظاهر گزارش یا تست بعد از تغییر کد، به‌جای گرفتن داده‌ی واقعی
-از داده‌ی مصنوعی استفاده کن:
+### Offline test (no internet, no hitting CoinGecko's rate limit):
+To quickly see what the report looks like, or to test after a code change,
+use synthetic data instead of fetching real data:
 ```bash
 python tests/run_offline_demo.py
 ```
 
-## ساختار پروژه
+## Project structure
 
 ```
 crypto_analyzer/
-├── config.py                  ← همه‌ی تنظیمات اینجا هاردکد شده (نه .env)
-├── main.py                    ← نقطه‌ی ورود CLI + منوی شماره‌دار
-├── scanner.py                 ← اسکن چندارزی و امتیازدهی/پیشنهاد (نسخه‌ی ۲)
-├── charting.py                ← رسم تصویر نمودار PNG (نسخه‌ی ۲)
+├── config.py                  ← all settings are hardcoded here (not .env)
+├── main.py                    ← CLI entry point + numbered menu
+├── scanner.py                 ← multi-coin scanning and scoring/suggestion (version 2)
+├── charting.py                ← drawing the PNG chart image (version 2)
 ├── data/
-│   ├── binance_client.py      ← گرفتن کندل از بایننس (منبع پیش‌فرض نسخه‌ی ۲)
-│   └── coingecko_client.py    ← گرفتن کندل از CoinGecko (منبع جایگزین)
+│   ├── binance_client.py      ← fetching candles from Binance (version 2 default source)
+│   └── coingecko_client.py    ← fetching candles from CoinGecko (fallback source)
 ├── indicators/
 │   ├── trend.py               ← SMA, EMA, MACD, ADX
 │   ├── momentum.py            ← RSI, Stochastic, CCI, Williams %R
 │   ├── volatility.py          ← Bollinger, ATR, Keltner, OBV
-│   └── levels.py               ← Fibonacci, Pivot Points, S/R
+│   └── levels.py              ← Fibonacci, Pivot Points, S/R
 ├── patterns/
-│   ├── candlestick.py         ← ۲۱ الگوی کندلی
-│   └── chart_patterns.py      ← الگوهای نموداری هندسی
+│   ├── candlestick.py         ← 21 candlestick patterns
+│   └── chart_patterns.py      ← geometric chart patterns
 ├── risk/
-│   └── stop_loss.py           ← محاسبه‌ی حد ضرر
+│   └── stop_loss.py           ← stop-loss calculation
 ├── backtest/
-│   └── engine.py              ← محاسبه‌ی نرخ موفقیت تاریخی
+│   └── engine.py              ← historical success-rate calculation
 ├── analysis/
-│   └── analyzer.py            ← هماهنگ‌کننده‌ی کل فرآیند
+│   └── analyzer.py            ← coordinator of the whole process
 └── tests/
-    ├── sample_data.py         ← تولید داده‌ی مصنوعی برای تست
-    └── run_offline_demo.py    ← اجرای کامل پایپ‌لاین بدون اینترنت
+    ├── sample_data.py         ← synthetic data generation for tests
+    └── run_offline_demo.py    ← full pipeline run with no internet
 ```
 
-معماری **ماژولار** است: هسته‌ی تحلیل (`analysis/analyzer.py`) کاملاً از رابط
-کاربری (`main.py`) جداست. یعنی وقتی خواستی یک ربات تلگرام هم روی همین منطق
-بسازی، فقط کافیست `run_full_analysis()` را از یک فایل جدید (مثلاً
-`telegram_bot.py`) صدا بزنی — نیازی به تغییر هسته‌ی تحلیل نیست.
+The architecture is **modular**: the analysis core (`analysis/analyzer.py`)
+is completely separate from the user interface (`main.py`). That means when
+you want to build a Telegram bot on the same logic, you only need to call
+`run_full_analysis()` from a new file (e.g. `telegram_bot.py`) — there is no
+need to change the analysis core.
 
-## نحوه‌ی کار بک‌تست (نکته‌ی مهم)
+## How the backtest works (important note)
 
-برای هر الگو، وقتی در گذشته رخ داده:
-1. یک «هدف» (بر پایه‌ی ATR یا خط گردن الگو) و یک «نقطه‌ی بطلان» تعیین می‌شود.
-2. تا ۱۰ کندل بعد (برای الگوی کندلی) یا ۲۰ کندل بعد (برای الگوی نموداری) جلو
-   می‌رود تا ببیند قیمت اول به هدف رسیده (**موفق**) یا اول نقطه‌ی بطلان را
-   لمس کرده (**ناموفق**) یا هیچ‌کدام رخ نداده (**timeout**).
-3. نرخ موفقیت = (تعداد موفق) ÷ (کل رخدادها) × ۱۰۰
+For each pattern, when it occurred in the past:
+1. A "target" (based on ATR or the pattern's neckline) and an "invalidation
+   point" are determined.
+2. It moves forward up to 10 candles later (for a candlestick pattern) or 20
+   candles later (for a chart pattern) to see whether price reached the
+   target first (**success**), touched the invalidation point first
+   (**failure**), or neither happened (**timeout**).
+3. Success rate = (number of successes) ÷ (total occurrences) × 100
 
-این دقیقاً همان چیزی است که در گفتگوی اولیه توضیح داده شد: «از بین ۱۰ بار که
-الگو دیده شده، ۴ بار درست دراومده».
+This is exactly what was explained in the initial conversation: "out of the
+10 times the pattern was seen, it worked out 4 times."
 
-## محدودیت‌های شناخته‌شده (صادقانه)
+## Known limitations (honest)
 
-- **مسیر پیش‌فرض (بایننس) محدودیت‌های نسخه‌ی ۱ را ندارد:** کندل‌ها بومیِ همان
-  تایم‌فریم‌اند (بدون resample)، تایم‌فریم 1h سالم کار می‌کند، تاریخچه صدها تا
-  هزاران کندل است و حجم واقعی است. فقط جفت‌های USDT پشتیبانی می‌شوند و نماد
-  باید روی بایننس لیست شده باشد.
-- **محدودیت‌های زیر فقط برای مسیر جایگزین کوین‌گکو (`--source coingecko`)
-  برقرار است:**
-  رزولوشن کندل خام کوین‌گکو بر اساس `days` خودکار تعیین می‌شود و قابل
-  override نیست (در پلن رایگان، فرستادن پارامتر `interval` خطای 400 می‌دهد):
-  ۱-۲ روز → ۳۰دقیقه‌ای، ۳-۳۰ روز → ۴ساعته، بالای ۳۰ روز → **۴روزه** (نه روزانه).
-  سقف تاریخچه در پلن رایگان ۳۶۵ روز است و تایم‌فریم `1d` در این مسیر حداکثر
-  حدود ۳۰ کندل واقعی روزانه می‌دهد — به همین دلیل در مسیر کوین‌گکو نمونه‌ی
-  آماری بک‌تست به‌خصوص برای الگوهای نموداری اغلب کم می‌ماند و هشدار «نمونه کم»
-  زیاد دیده می‌شود. (در مسیر بایننس هم برای الگوهای کم‌رخداد ممکن است نمونه کم
-  باشد؛ هشدار را جدی بگیر.)
-- **اسکن کامل بازار زمان‌بر است** (۴۰ ترکیب، هر کدام با بک‌تست کامل روی
-  ۱۰۰۰ تا ۱۵۰۰ کندل؛ حدود ۱٫۵ تا ۲ دقیقه). لیست ارزها و تایم‌فریم‌های اسکن در
-  `config.py` قابل کم‌وزیاد کردن است.
-- **الگوهای نموداری با اسکن پنجره‌ای تشخیص داده می‌شوند** که می‌تواند گاهی یک
-  الگوی واقعی را چندبار (در پنجره‌های همپوشان) یا با کمی تاخیر شناسایی کند.
-  کد سعی می‌کند این همپوشانی را حذف کند ولی کامل نیست.
-- **برای بک‌تست الگوهای نموداری، نقطه‌ی شروع شبیه‌سازی عمداً چند کندل بعد از
-  نقطه‌ی تکمیل الگو قرار داده شده** (به‌اندازه‌ی `SWING_LOOKBACK_CANDLES`)، چون
-  خودِ تشخیص سقف/کف برای تأیید شدن به چند کندل بعدی نیاز دارد — بدون این
-  تنظیم، بک‌تست کمی خوش‌بینانه‌تر از واقعیت می‌شد (نوعی نشت اطلاعات آینده).
-- **حجم معاملات در مسیر کوین‌گکو از یک اندپوینت جدا (`market_chart`) گرفته
-  می‌شود و برای هر کندل، حجمِ تمام نقاط داخل بازه‌ی زمانی آن کندل جمع زده
-  می‌شود** — دقیق‌تر از تطابق تک‌نقطه‌ای است ولی تقریبی است. در مسیر بایننس
-  حجم، حجم واقعی همان کندل است و این محدودیت وجود ندارد.
+- **The default path (Binance) does not have the version 1 limitations:**
+  candles are native to the timeframe (no resampling), the 1h timeframe works
+  correctly, history runs to hundreds or thousands of candles, and volume is
+  real. Only USDT pairs are supported, and the symbol must be listed on
+  Binance.
+- **The limitations below apply only to the CoinGecko fallback path
+  (`--source coingecko`):**
+  CoinGecko's raw candle resolution is determined automatically by `days` and
+  cannot be overridden (on the free plan, sending the `interval` parameter
+  gives a 400 error): 1–2 days → 30-minute, 3–30 days → 4-hour, over 30 days
+  → **4-day** (not daily). The history cap on the free plan is 365 days, and
+  the `1d` timeframe on this path yields at most about 30 real daily candles
+  — which is why, on the CoinGecko path, the backtest sample size often stays
+  small, especially for chart patterns, and the "low sample" warning shows up
+  a lot. (On the Binance path too, low-occurrence patterns may have small
+  samples; take the warning seriously.)
+- **A full market scan is time-consuming** (40 combinations, each with a full
+  backtest over 1000 to 1500 candles; about 1.5 to 2 minutes). The list of
+  coins and timeframes scanned can be trimmed or extended in `config.py`.
+- **Chart patterns are detected with a windowed scan**, which can sometimes
+  identify a real pattern several times (in overlapping windows) or with a
+  slight delay. The code tries to remove this overlap, but it is not perfect.
+- **For backtesting chart patterns, the simulation start point is
+  deliberately placed a few candles after the pattern completion point** (by
+  `SWING_LOOKBACK_CANDLES`), because detecting a high/low itself needs a few
+  following candles to be confirmed — without this adjustment, the backtest
+  would be slightly more optimistic than reality (a kind of future
+  information leakage).
+- **Volume on the CoinGecko path is fetched from a separate endpoint
+  (`market_chart`) and, for each candle, the volume of all points inside that
+  candle's time range is summed** — more accurate than single-point matching,
+  but approximate. On the Binance path, volume is the real volume of the
+  candle itself and this limitation does not exist.
 
-## گام بعدی پیشنهادی
+## Suggested next step
 
-وقتی از نتایج CLI راضی بودی، همین منطق (`analysis/analyzer.py`) را می‌شود با
-چند خط کد به یک ربات تلگرام وصل کرد (گرفتن پیام کاربر → صدا زدن
-`run_full_analysis()` → فرستادن گزارش به‌صورت پیام). هر وقت خواستی برویم
-سراغش خبر بده.
+Once you are happy with the CLI results, the same logic
+(`analysis/analyzer.py`) can be connected to a Telegram bot with a few lines
+of code (receive the user's message → call `run_full_analysis()` → send the
+report as a message). Let me know whenever you want us to go for it.

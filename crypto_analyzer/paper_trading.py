@@ -1,29 +1,29 @@
 """
-paper_trading.py — صرافی کاغذی (Paper Trading) برای تست زنده‌ی ربات اصلی.
+paper_trading.py — Paper exchange (Paper Trading) for live-testing the main bot.
 
-کاملاً افزودنی است: هیچ محاسبه‌ی موجودی (اندیکاتور، الگو، اسکنر، بک‌تست)
-تغییر نمی‌کند. این ماژول فقط «مصرف‌کننده»‌ی خروجی‌های موجود است:
-- قیمت لحظه‌ای از اندپوینت عمومی بایننس (/api/v3/ticker/price) با همان
-  ترتیب دامنه‌های data/binance_client.py و کش ۳ ثانیه‌ای.
-- حالت خودکار فقط خروجی scanner.score_candidate (رفتار پیش‌فرض) را می‌خواند.
+Fully additive: no existing computation (indicators, patterns, scanner,
+backtest) changes. This module is only a "consumer" of the existing outputs:
+- Spot price from Binance's public endpoint (/api/v3/ticker/price) with the
+  same domain fallback order of data/binance_client.py and a 3-second cache.
+- Auto mode reads only the output of scanner.score_candidate (default behavior).
 
-مدل حسابداری (مارجینی و متقارن — مستند):
-- مبلغ پوزیشن (amount_usdt) همان مارجین/ارزش مبنای معامله است؛
+Accounting model (margined and symmetric — documented):
+- The position amount (amount_usdt) is the margin/base value of the trade;
   qty = amount / entry_price.
-- سود/زیان ناخالص: لانگ (exit-entry)/entry × amount و شورت دقیقاً قرینه:
-  (entry-exit)/entry × amount. برای شورت وثیقه‌ی جداگانه‌ای مدل نمی‌شود؛
-  همان مبلغ مبناست و PnL متقارن است.
-- کارمزد: PAPER_FEE_PCT درصد از مبلغ پوزیشن، در هر طرف (باز و بسته‌شدن)،
-  جدا کسر می‌شود — همان مدل ساده‌ی بک‌تست سیستمی.
-- موجودی (balance) = وجه آزاد؛ هنگام بازشدن، مبلغ + کارمزد ورود از آن کم
-  می‌شود و هنگام بسته‌شدن مبلغ + PnL ناخالص − کارمزد خروج برمی‌گردد.
-- R هر معامله‌ی بسته: net_pnl / (|entry-stop| × qty) — فقط وقتی حد ضرر
-  دارد؛ بدون حد ضرر R برابر null است.
+- Gross profit/loss: long (exit-entry)/entry × amount and short exactly the
+  mirror: (entry-exit)/entry × amount. For shorts no separate collateral is
+  modeled; the same amount is the base and the PnL is symmetric.
+- Fee: PAPER_FEE_PCT percent of the position amount, on each side (open and
+  close), deducted separately — the same simple model as the system backtest.
+- Balance = free funds; when a position opens, amount + entry fee is deducted
+  from it, and when it closes, amount + gross PnL − exit fee returns.
+- R of each closed trade: net_pnl / (|entry-stop| × qty) — only when it has
+  a stop loss; without a stop loss, R is null.
 
-وضعیت هر حساب در paper_state.json کنار همین فایل (نوشتن اتمیک) نگه داشته
-می‌شود؛ حساب‌ها با chat_id از هم جدا هستند تا ربات به هر کاربر حساب خودش
-را بدهد. موتور پس‌زمینه ندارد: evaluate() باید از بیرون (تعامل کاربر یا
-جاب دوره‌ای ربات) صدا زده شود.
+Each account's state is kept in paper_state.json next to this file (atomic
+write); accounts are separated by chat_id so the bot gives each user their
+own account. There is no background engine: evaluate() must be called from
+outside (user interaction or the bot's periodic job).
 """
 
 import json
@@ -48,19 +48,19 @@ _TF_SECONDS = {"1h": 3600, "4h": 4 * 3600, "1d": 86400, "1w": 7 * 86400}
 
 
 class PaperError(Exception):
-    """خطای معاملات کاغذی (ورودی نامعتبر، موجودی ناکافی و …)."""
+    """Paper trading error (invalid input, insufficient balance, …)."""
     pass
 
 
 # ---------------------------------------------------------------------------
-# فید قیمت (با امکان تزریق تابع قیمت برای تست آفلاین)
+# Price feed (with the option to inject a price function for offline tests)
 # ---------------------------------------------------------------------------
-_price_fn = None          # اگر ست شود، به‌جای شبکه استفاده می‌شود (تست)
+_price_fn = None          # If set, it is used instead of the network (test)
 _price_cache = {}         # symbol -> (epoch, price)
 
 
 def set_price_function(fn):
-    """تزریق تابع قیمت برای تست آفلاین؛ با None به حالت شبکه برمی‌گردد."""
+    """Injects a price function for offline tests; with None it returns to network mode."""
     global _price_fn
     _price_fn = fn
     _price_cache.clear()
@@ -68,13 +68,14 @@ def set_price_function(fn):
 
 def get_price(symbol: str) -> float:
     """
-    قیمت لحظه‌ای اسپات از /api/v3/ticker/price بایننس (بدون API key) با
-    همان ترتیب fallback دامنه‌های BINANCE_BASE_URLS و کش چندثانیه‌ای
-    (PAPER_PRICE_CACHE_SECONDS). نماد مثل «BTC» یا «BTCUSDT» پذیرفته می‌شود.
+    Spot price from Binance's /api/v3/ticker/price (no API key) with
+    the same fallback order of the BINANCE_BASE_URLS domains and a cache of a
+    few seconds (PAPER_PRICE_CACHE_SECONDS). A symbol like "BTC" or "BTCUSDT"
+    is accepted.
 
-    افزودنی فارکس: نمادهای مجموعه‌ی فارکس (config.FOREX_SYMBOLS) به
-    بایننس نمی‌روند؛ قیمتشان بسته‌شدن آخرین کندل کامل فید Dukascopy
-    است — با تأخیر (FOREX_FA.md) و فقط برای معاملات کاغذی دستی.
+    Forex add-on: symbols in the forex set (config.FOREX_SYMBOLS) do not go
+    to Binance; their price is the close of the last complete candle of the
+    Dukascopy feed — delayed (FOREX_FA.md) and only for manual paper trades.
     """
     from data import forex_client
     if forex_client.is_forex_symbol(symbol):
@@ -109,7 +110,7 @@ def get_price(symbol: str) -> float:
 
 
 # ---------------------------------------------------------------------------
-# ذخیره‌سازی وضعیت (paper_state.json — نوشتن اتمیک)
+# State persistence (paper_state.json — atomic write)
 # ---------------------------------------------------------------------------
 def _load_state() -> dict:
     try:
@@ -143,7 +144,7 @@ def _new_account() -> dict:
             "risk_pct": float(config.PAPER_AUTO_RISK_PCT),
             "max_open": int(config.PAPER_AUTO_MAX_OPEN),
         },
-        "cooldowns": {},   # symbol -> epoch بسته‌شدن آخر (برای حالت خودکار)
+        "cooldowns": {},   # symbol -> epoch of the last close (for auto mode)
     }
 
 
@@ -157,20 +158,20 @@ def _account_in(state: dict, chat_id) -> dict:
 
 
 def all_chat_ids() -> list:
-    """همه‌ی chat_id هایی که حساب کاغذی دارند (برای جاب دوره‌ای ربات)."""
+    """All chat_ids that have a paper account (for the bot's periodic job)."""
     with _LOCK:
         return list(_load_state()["accounts"].keys())
 
 
 # ---------------------------------------------------------------------------
-# محاسبات داخلی پوزیشن
+# Internal position calculations
 # ---------------------------------------------------------------------------
 def _fee(amount: float) -> float:
     return amount * float(config.PAPER_FEE_PCT) / 100.0
 
 
 def _gross_pnl(pos: dict, price: float) -> float:
-    """سود/زیان ناخالص در قیمت داده‌شده — متقارن برای لانگ/شورت."""
+    """Gross profit/loss at the given price — symmetric for long/short."""
     entry, amount = pos["entry_price"], pos["amount_usdt"]
     if pos["direction"] == "long":
         return (price - entry) / entry * amount
@@ -178,12 +179,12 @@ def _gross_pnl(pos: dict, price: float) -> float:
 
 
 def _unrealized_net(pos: dict, price: float) -> float:
-    """PnL تحقق‌نیافته‌ی خالص (بعد از کارمزد ورود و کارمزد خروج برآوردی)."""
+    """Net unrealized PnL (after the entry fee and the estimated exit fee)."""
     return _gross_pnl(pos, price) - pos["entry_fee"] - _fee(pos["amount_usdt"])
 
 
 def _close_record(acct: dict, pos: dict, exit_price: float, reason: str) -> dict:
-    """پوزیشن را با قیمت/دلیل داده‌شده می‌بندد، حساب را به‌روز و رکورد بسته برمی‌گرداند."""
+    """Closes the position at the given price/reason, updates the account and returns the closed record."""
     gross = _gross_pnl(pos, exit_price)
     exit_fee = _fee(pos["amount_usdt"])
     net = gross - pos["entry_fee"] - exit_fee
@@ -213,21 +214,22 @@ def _close_record(acct: dict, pos: dict, exit_price: float, reason: str) -> dict
 
 def _effective_stop(pos: dict):
     """
-    (حد ضرر مؤثر, دلیل) را با ترکیب حد ضرر ثابت و تریلینگ برمی‌گرداند.
-    best_price بهترین قیمت به نفع پوزیشن از زمان بازشدن است؛ تریلینگ‌استاپ
-    روی آن سوار است: لانگ best×(1-trail٪)، شورت best×(1+trail٪).
+    Returns (effective stop loss, reason) by combining the fixed stop loss and trailing.
+    best_price is the best price in the position's favor since it opened; the
+    trailing stop rides on it: long best×(1-trail%), short best×(1+trail%).
 
-    ⚠️ هم‌ترازی با بک‌تست (افزودنی، تست A/B در TRAILING_AB_FA.md):
-    پارامترهای پذیرفته‌شده‌ی A/B در config.SYSBT_TRAILING_ADOPTED بر
-    حسب R هستند (فعال‌سازی 1.0R، فاصله 0.5R پشت بهترین قیمت) و مبنای
-    پیش‌فرض حالت «خودکار»‌اند — تابع open_position همان‌جا که
-    trailing_pct داده نشده باشد برای پوزیشن خودکارِ دارای حد ضرر،
-    فاصله‌ی R-محور را به درصدِ معادلِ همان لحظه (0.5×|ورود−استاپ|/ورود
-    ×۱۰۰) تبدیل و ذخیره می‌کند تا موتور درصدی این ماژول همان فاصله را
-    اجرا کند. دو انحراف باقی می‌ماند و مستند است: (۱) این ماژول درصدی
-    است و فاصله با دورشدن قیمت از ورود، بر حسب R منقبض می‌شود؛ (۲)
-    آستانه‌ی فعال‌سازی ندارد و از ورود فعال است. پوزیشن‌های دستی
-    دقیقاً مثل قبل‌اند: بدون trailing_pct یعنی بدون تریلینگ.
+    ⚠️ Alignment with the backtest (additive, A/B test in TRAILING_AB_FA.md):
+    the accepted A/B parameters in config.SYSBT_TRAILING_ADOPTED are in
+    terms of R (activation 1.0R, distance 0.5R behind the best price) and are
+    the default basis of the "auto" mode — the open_position function, where
+    trailing_pct is not given, converts the R-based distance for an auto
+    position with a stop loss into the equivalent percent at that moment
+    (0.5×|entry−stop|/entry ×100) and stores it, so this module's percent
+    engine executes the same distance. Two deviations remain and are
+    documented: (1) this module is percent-based and the distance, in R
+    terms, contracts as the price moves away from entry; (2) it has no
+    activation threshold and is active from entry. Manual positions are
+    exactly as before: no trailing_pct means no trailing.
     """
     stop, reason = pos.get("stop"), "stop"
     trail = pos.get("trailing_pct")
@@ -270,10 +272,10 @@ _REASON_FA = {"manual": "بستن دستی", "stop": "حد ضرر", "target": "�
 
 
 # ---------------------------------------------------------------------------
-# API حساب
+# Account API
 # ---------------------------------------------------------------------------
 def get_account(chat_id) -> dict:
-    """رکورد حساب (موجودی، پوزیشن‌های باز، تاریخچه، تنظیمات خودکار)."""
+    """Account record (balance, open positions, history, auto settings)."""
     with _LOCK:
         state = _load_state()
         acct = _account_in(state, chat_id)
@@ -282,7 +284,7 @@ def get_account(chat_id) -> dict:
 
 
 def reset_account(chat_id) -> dict:
-    """حساب را به موجودی شروع برمی‌گرداند و همه‌چیز را پاک می‌کند."""
+    """Returns the account to the starting balance and clears everything."""
     with _LOCK:
         state = _load_state()
         state["accounts"][str(chat_id)] = _new_account()
@@ -294,11 +296,11 @@ def open_position(chat_id, symbol: str, direction: str, amount,
                   stop=None, target=None, trailing_pct=None,
                   source: str = "manual") -> dict:
     """
-    پوزیشن مارکت باز می‌کند. amount مبلغ مبنا (USDT) است؛ کارمزد ورود از
-    موجودی آزاد کسر می‌شود. stop/target/trailing_pct اختیاری‌اند و جهتشان
-    نسبت به قیمت ورود اعتبارسنجی می‌شود.
-    source منشأ پوزیشن است: "manual" (بازشده با دست کاربر) یا "auto"
-    (حالت خودکار) — در لیست پوزیشن‌ها و تاریخچه با برچسب نشان داده می‌شود.
+    Opens a market position. amount is the base amount (USDT); the entry fee
+    is deducted from the free balance. stop/target/trailing_pct are optional
+    and their direction is validated against the entry price.
+    source is the position's origin: "manual" (opened by the user's hand) or
+    "auto" (auto mode) — shown with a label in the position list and history.
     """
     direction = str(direction).lower()
     if direction not in ("long", "short"):
@@ -308,9 +310,9 @@ def open_position(chat_id, symbol: str, direction: str, amount,
         raise PaperError("مبلغ باید مثبت باشد.")
     from data import forex_client
     if forex_client.is_forex_symbol(symbol):
-        # افزودنی فارکس: پوزیشن فارکس فقط دستی است (خودکار کریپتویی
-        # می‌ماند) و قیمتش از فید با تأخیر می‌آید — برچسب market روی
-        # پوزیشن ذخیره می‌شود تا در نمایش‌ها معلوم باشد.
+        # Forex add-on: a forex position is manual only (auto stays crypto
+        # and its price comes from the delayed feed — the market label is stored
+        # on the position so it is clear in the displays.
         if source != "manual":
             raise PaperError("پوزیشن فارکس فقط به‌صورت دستی باز می‌شود.")
         sym = forex_client.normalize_forex_symbol(symbol)
@@ -334,10 +336,10 @@ def open_position(chat_id, symbol: str, direction: str, amount,
         if not 0 < trailing_pct < 100:
             raise PaperError("درصد تریلینگ باید بین ۰ و ۱۰۰ باشد.")
     elif source == "auto" and stop is not None:
-        # هم‌ترازی با A/B (افزودنی): پوزیشن خودکار بدون تریلینگ صریح،
-        # فاصله‌ی پذیرفته‌شده‌ی R-محور بک‌تست را می‌گیرد — تبدیل به درصد
-        # معادل در لحظه‌ی ورود: trail_r × |ورود − استاپ| / ورود × ۱۰۰.
-        # فقط حالت خودکار و فقط وقتی حد ضرر هست؛ دستی دست نخورده.
+        # Alignment with A/B (additive): an auto position without explicit trailing
+        # takes the accepted R-based distance of the backtest — converted to the equivalent
+        # percent at the moment of entry: trail_r × |entry − stop| / entry × 100.
+        # Only auto mode and only when there is a stop loss; manual is untouched.
         adopted = getattr(config, "SYSBT_TRAILING_ADOPTED", None)
         if adopted:
             trailing_pct = round(
@@ -377,7 +379,7 @@ def open_position(chat_id, symbol: str, direction: str, amount,
 
 
 def close_position(chat_id, pos_id) -> dict:
-    """پوزیشن باز را با قیمت لحظه‌ای و دلیل «دستی» می‌بندد."""
+    """Closes the open position at the spot price with the reason "manual"."""
     with _LOCK:
         state = _load_state()
         acct = _account_in(state, chat_id)
@@ -391,10 +393,11 @@ def close_position(chat_id, pos_id) -> dict:
 
 def evaluate(chat_id, price_fn=None) -> list:
     """
-    موتور ارزیابی: برای هر پوزیشن باز، best_price را با قیمت فعلی به‌روز
-    می‌کند و اگر حد ضرر (ثابت یا تریلینگ) یا هدف خورده باشد می‌بندد.
-    خروجی: لیست رویدادهای بسته‌شدن (دیکشنری با کلید message فارسی).
-    price_fn فقط برای تست است؛ در حالت عادی get_price شبکه/تزریقی صدا می‌شود.
+    Evaluation engine: for each open position, updates best_price with the
+    current price and closes it if the stop loss (fixed or trailing) or the
+    target has been hit. Output: a list of close events (dicts with a Persian
+    message key). price_fn is for tests only; in normal mode get_price
+    (network/injected) is called.
     """
     events = []
     with _LOCK:
@@ -434,7 +437,7 @@ def evaluate(chat_id, price_fn=None) -> list:
 
 
 def list_positions(chat_id) -> list:
-    """پوزیشن‌های باز همراه با قیمت فعلی و PnL زنده‌ی هرکدام."""
+    """Open positions together with the current price and each one's live PnL."""
     with _LOCK:
         acct = _account_in(_load_state(), chat_id)
         out = []
@@ -452,9 +455,9 @@ def list_positions(chat_id) -> list:
 
 def portfolio_summary(chat_id) -> dict:
     """
-    خلاصه‌ی سبد: موجودی آزاد، equity (آزاد + مارجین پوزیشن‌ها + PnL
-    تحقق‌نیافته‌ی ناخالص)، PnL باز خالص، PnL تحقق‌یافته، نرخ برد و تعداد
-    معاملات بسته.
+    Portfolio summary: free balance, equity (free + positions' margin +
+    gross unrealized PnL), net open PnL, realized PnL, win rate and the
+    number of closed trades.
     """
     with _LOCK:
         acct = _account_in(_load_state(), chat_id)
@@ -480,14 +483,14 @@ def portfolio_summary(chat_id) -> dict:
 
 
 def history(chat_id, limit: int = 20) -> list:
-    """آخرین معاملات بسته‌شده (جدیدترین اول)."""
+    """The last closed trades (newest first)."""
     with _LOCK:
         acct = _account_in(_load_state(), chat_id)
         return list(reversed(acct["history"]))[:limit]
 
 
 def set_auto(chat_id, enabled=None, **settings) -> dict:
-    """روشن/خاموش‌کردن و تنظیم حالت خودکار حساب؛ تنظیمات برگشتی را برمی‌گرداند."""
+    """Turning the account's auto mode on/off and setting it; returns the settings."""
     with _LOCK:
         state = _load_state()
         acct = _account_in(state, chat_id)
@@ -502,25 +505,27 @@ def set_auto(chat_id, enabled=None, **settings) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# حالت خودکار — تست زنده‌ی ربات اصلی روی حساب کاغذی
+# Auto mode — live test of the main bot on the paper account
 # ---------------------------------------------------------------------------
 def auto_tick(chat_id) -> list:
     """
-    یک قدم حالت خودکار:
-    ۱) اول evaluate — پوزیشن‌های رسیده به حد/هدف بسته می‌شوند.
-    ۲) اگر خودکار روشن باشد: برای هر ارز SCAN_SYMBOLS روی تایم‌فریم تنظیم‌شده
-       همان امتیازدهی پیش‌فرض اسکنر (score_candidate بدون هیچ پارامتر افزودنی)
-       اجرا می‌شود. نامزدی که امتیازش ≥ آستانه باشد، در آن ارز پوزیشن باز
-       نداشته باشد، کول‌داون ۱۲ کندلی‌اش نگذشته باشد و سقف پوزیشن هم‌زمان
-       پر نشده باشد → با حد ضرر و هدف خود نامزد باز می‌شود؛ مبلغ طوری است
-       که ریسک تا حد ضرر = risk_pct درصد از equity باشد.
-       دروازه‌ی EV (افزودنی): علاوه بر آستانه‌ی امتیاز، تصمیم لایه‌ی EV
-       نامزد (scanner.attach_ev_decision — فقط از کش خوانده می‌شود) باید
-       BUY/SELL/STRONG_* باشد؛ یعنی EV خالص خارج‌ازنمونه‌ی آن ترکیب
-       مثبت و نمونه کافی باشد. NO_TRADE و WAIT خودکار باز نمی‌شوند.
-       این دروازه فقط حالت خودکار را محدود می‌کند؛ بازکردن دستی کاربر
-       عمداً بدون هیچ دروازه‌ای می‌ماند.
-    خروجی: لیست رشته‌های رویداد (باز/بسته‌شدن) برای اطلاع‌رسانی ربات.
+    One step of auto mode:
+    1) First evaluate — positions that reached stop/target are closed.
+    2) If auto is on: for each symbol in SCAN_SYMBOLS, on the configured
+       timeframe, the scanner's default scoring (score_candidate with no
+       additive parameters) is run. A candidate whose score is ≥ the
+       threshold, has no open position in that symbol, whose 12-candle
+       cooldown has not yet elapsed, and the simultaneous-position cap is
+       not full → is opened with the candidate's own stop loss and target;
+       the amount is such that the risk to the stop loss = risk_pct percent
+       of equity.
+       EV gate (additive): in addition to the score threshold, the candidate's
+       EV-layer decision (scanner.attach_ev_decision — read from cache only)
+       must be BUY/SELL/STRONG_*; i.e. that combination's net out-of-sample
+       EV is positive and the sample is sufficient. NO_TRADE and WAIT do not
+       open automatically. This gate only restricts auto mode; the user's
+       manual opening deliberately stays without any gate.
+    Output: a list of event strings (open/close) for notifying the bot.
     """
     actions = [ev["message"] for ev in evaluate(chat_id)]
     with _LOCK:
@@ -556,9 +561,9 @@ def auto_tick(chat_id) -> list:
             report = analyzer.build_report(df, symbol, tf)
             cand = scanner.score_candidate(df, report, symbol, tf)
         except Exception:
-            continue  # خطای یک ارز، تیک خودکار را متوقف نمی‌کند
-        # دروازه‌ی EV: تصمیم باید قابل اقدام باشد (EV مثبت + نمونه کافی)؛
-        # هر دو شرط «آستانه‌ی امتیاز حساب» و «دروازه‌ی EV» با هم لازم‌اند.
+            continue  # One symbol's error does not stop the auto tick
+        # EV gate: the decision must be actionable (positive EV + sufficient sample);
+        # both the "account score threshold" and the "EV gate" conditions are required together.
         try:
             scanner.attach_ev_decision(cand)
         except Exception:
@@ -582,7 +587,7 @@ def auto_tick(chat_id) -> list:
             pos = open_position(chat_id, symbol, cand["direction"], round(amount, 2),
                                 stop=stop, target=cand.get("target"), source="auto")
         except Exception:
-            continue  # موجودی/قیمت/اعتبارسنجی یک ارز، تیک خودکار را متوقف نمی‌کند
+            continue  # One symbol's balance/price/validation does not stop the auto tick
         actions.append(
             f"🤖 حالت خودکار: پوزیشن #{pos['id']} {pos['symbol']}/USDT "
             f"({_DIR_FA[pos['direction']]}) باز شد — امتیاز {cand['score']}/100 ({tf}) | "
@@ -592,7 +597,7 @@ def auto_tick(chat_id) -> list:
 
 
 # ---------------------------------------------------------------------------
-# متن‌های فارسی آماده برای نمایش (ربات و CLI)
+# Ready Persian texts for display (bot and CLI)
 # ---------------------------------------------------------------------------
 def summary_text(chat_id) -> str:
     s = portfolio_summary(chat_id)

@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
 tests/test_improvement_program.py
-تست آفلاین سیم‌کشی برنامه‌ی بهبود (مراحل ۱ تا ۳) — بدون اینترنت:
+Offline test of the improvement program wiring (steps 1 to 3) — no internet:
 
     python tests/test_improvement_program.py
 
-پوشش:
-۱) ثابت‌های کانفیگِ وضعیت پذیرفته‌شده: دروازه on با n_min=۸ و لبه‌ی
-   smooth، پیش‌فرض روشنِ رژیم و MTF، و max_hold بدون تغییر (مرحله‌ی ۳
-   رد شد → IMPROVE_SYSBT_MAX_HOLD=None و ثابت موتور همان ۴۰).
-۲) حاشیه‌ی دروازه‌ی EV در مسیر زنده (scanner.attach_ev_decision):
-   کلید افزودنی ev_gate با سمانتیک دقیق مرحله‌ی ۱ — n≥۸ و امید
-   تحقق‌یافته <۰ → suppressed=True؛ n<۸ → اجازه (نمونه ناکافی)؛
-   امید ≥۰ → اجازه. و سازگاری با تصمیم اجباری: هرجا دروازه suppress
-   می‌کند، decide_candidate هم NO_TRADE می‌دهد.
-۳) حل پیش‌فرض‌های scan_market از کانفیگ: با مونکی‌پچ آفلاینِ fetch و
-   score_candidate — فراخوانی بدون آرگومان باید apply_regime=True و
-   مسیر MTF را فعال کند و جهت روزانه بدون رژیم حساب شود؛ و خاموش‌کردن
-   صریح (False) باید بر کانفیگ غلبه کند.
+Coverage:
+1) Config constants of the accepted state: gate on with n_min=8 and a smooth
+   edge, regime and MTF defaults on, and max_hold unchanged (step 3 was
+   rejected → IMPROVE_SYSBT_MAX_HOLD=None and the engine constant stays 40).
+2) The EV gate margin on the live path (scanner.attach_ev_decision): the
+   additive ev_gate key with the exact semantics of step 1 — n≥8 and realized
+   expectancy <0 → suppressed=True; n<8 → allowed (insufficient sample);
+   expectancy ≥0 → allowed. And consistency with the mandatory decision:
+   wherever the gate suppresses, decide_candidate also gives NO_TRADE.
+3) Resolving scan_market defaults from config: with an offline monkeypatch of
+   fetch and score_candidate — a call with no arguments must activate
+   apply_regime=True and the MTF path, and the daily direction is computed
+   without the regime; and an explicit off (False) must override the config.
 """
 
 import os
@@ -40,7 +40,7 @@ def check(name, cond, detail=""):
         fails.append(name)
 
 
-# --- ۱) ثابت‌های پذیرفته‌شده ---------------------------------------------------
+# --- 1) Accepted constants ---
 check("دروازه: حالت on", config.IMPROVE_GATE_MODE == "on",
       str(config.IMPROVE_GATE_MODE))
 check("دروازه: n_min = ۸", config.IMPROVE_GATE_N_MIN == 8)
@@ -50,7 +50,7 @@ check("MTF: پیش‌فرض روشن", config.IMPROVE_MTF_DEFAULT is True)
 check("مرحله ۳ رد شد: IMPROVE_SYSBT_MAX_HOLD خالی", config.IMPROVE_SYSBT_MAX_HOLD is None)
 check("ثابت موتور max_hold همان ۴۰", config.SYSBT_MAX_HOLD_CANDLES == 40)
 
-# --- ۲) حاشیه‌ی دروازه در attach_ev_decision -----------------------------------
+# --- 2) Gate margin in attach_ev_decision ---
 def cand_with_ev(n, exp):
     return {"symbol": "XXX", "timeframe": "4h", "direction": "long",
             "score": 70.0, "entry": 100.0, "stop": 90.0, "target": 120.0,
@@ -70,14 +70,14 @@ check("دروازه: n<۸ → اجازه (سابقه ناکافی)", c["ev_gate"
 c = scanner.attach_ev_decision(cand_with_ev(8, -0.01))
 check("دروازه: مرز n=۸ و امید منفی → suppress", c["ev_gate"]["suppressed"] is True)
 
-# سازگاری: هر suppress دروازه باید با NO_TRADE اجباری لایه‌ی EV همراه باشد
+# Consistency: every gate suppression must come with the EV layer's mandatory NO_TRADE
 for n, exp in ((12, -0.30), (25, -0.05), (40, -1.20)):
     cc = cand_with_ev(n, exp)
     dec = ev_mod.decide_candidate(cc, cc["ev"])
     check(f"سازگاری تصمیم: n={n} exp={exp} → NO_TRADE",
           dec["decision"] == "NO_TRADE", dec["decision"])
 
-# --- ۳) حل پیش‌فرض‌های scan_market از کانفیگ -----------------------------------
+# --- 3) Resolving scan_market defaults from config ---
 calls = []
 
 def fake_fetch(symbol, timeframe, limit=None):

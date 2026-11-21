@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
-telegram_bot.py — رابط تلگرامی ابزار تحلیل تکنیکال (نسخه‌ی ۲)
+telegram_bot.py — Telegram interface for the technical-analysis tool (version 2)
 
-منطق اصلی (فید بایننس، اندیکاتورها، الگوها، بک‌تست و اسکنر) هیچ تغییری نکرده؛
-این فایل فقط یک پوسته‌ی تلگرامی روی همان توابع است.
+The core logic (Binance feed, indicators, patterns, backtest, and scanner) is
+unchanged; this file is only a Telegram shell over the same functions.
 
-اجرا:  python telegram_bot.py
+Run:  python telegram_bot.py
 
-کلیدها «شیشه‌ای»اند: در تلگرام دکمه‌های اینلاین همان دکمه‌های شیشه‌ای هستند.
-اسکن زنده است: در طول اسکن، پیام وضعیت با نوار پیشرفت و نام ارز/تایم‌فریم
-جاری دائم ویرایش می‌شود تا ربات در زمان اسکن «مرده» به نظر نرسد.
+The buttons are "glass": in Telegram, the inline buttons are the glass buttons.
+The scan is live: during the scan, the status message is continuously edited with
+a progress bar and the current symbol/timeframe, so the bot does not look "dead"
+while scanning.
 """
 
 import asyncio
@@ -33,7 +34,7 @@ from analysis import ev as ev_mod
 
 
 def _ev_lines(c) -> list:
-    """خط‌های نمایشی لایه‌ی EV برای یک نامزد (تصمیم + آمار + دلیل رد)."""
+    """Display lines for the EV layer for a candidate (decision + statistics + rejection reason)."""
     if not c.get("decision"):
         return []
     lines = [f"تصمیم: {c['decision_fa']} ({c['decision']})",
@@ -44,13 +45,13 @@ def _ev_lines(c) -> list:
 
 
 def _llm_lines(c) -> list:
-    """بلوک فشرده‌ی بازبینی LLM برای یک نامزد — فقط وقتی کلید "llm" دارد.
+    """Compact LLM-review block for a candidate — only when it has an "llm" key.
 
-    بدون کلید llm لیست خالی برمی‌گردد و متن پیام دقیقاً مثل قبل می‌ماند.
-    خود ربات هیچ‌وقت لایه‌ی LLM را صدا نمی‌زند (هزینه/زمان هر بازبینی تا
-    ۵ فراخوانی مدل استدلالی است)؛ این تابع فقط نتیجه‌ای را نمایش می‌دهد
-    که یک مسیر دیگر (CLI با --llm یا اسکن برنامه‌ای) روی نامزد نشانده
-    باشد. جزئیات: LLM_LAYER_FA.md.
+    Without an llm key, an empty list is returned and the message text remains exactly
+    as before. The bot itself never calls the LLM layer (each review can cost/time up
+    to 5 reasoning-model calls); this function only displays a result that another
+    path (the CLI with --llm or a programmatic scan) attached to the candidate.
+    Details: LLM_LAYER_FA.md.
     """
     llm = c.get("llm")
     if not llm:
@@ -67,7 +68,7 @@ def _llm_lines(c) -> list:
     return lines
 
 
-# پیشنهاد تک‌ارز: همان امتیازدهی اسکنر روی همان ارز/تایم‌فریم اجرا می‌شود.
+# Single-symbol suggestion: the scanner's scoring is run on the same symbol/timeframe.
 def _verdict(symbol, timeframe, df, report) -> str:
     c = _scanner_mod.score_candidate(df, report, symbol, timeframe)
     try:
@@ -91,9 +92,9 @@ def _verdict(symbol, timeframe, df, report) -> str:
         rel = "" if p["reliable_sample"] else "  ⚠️ نمونه کم"
         lines.append(f"الگوی پشتیبان: {p['fa']} — موفقیت تاریخی {p['success_rate_pct']}٪ "
                      f"({p['total_occurrences']} رخداد){rel}")
-    # گام ۵: زمینه‌ی مشتقه (فاندینگ/بهره‌ی باز) — فقط نمایشی و فقط اگر
-    # داده برگشت؛ get_derivatives_context روی هر خطایی None می‌دهد.
-    # نمادهای فارکس مشتقه‌ی بایننسی ندارند و این بخش برایشان رد می‌شود.
+    # Step 5: derivatives context (funding/open interest) — display only, and only if
+    # data is returned; get_derivatives_context returns None on any error.
+    # Forex symbols have no Binance derivatives, so this section is skipped for them.
     from data import forex_client as _fx
     dctx = None
     if not _fx.is_forex_symbol(symbol):
@@ -110,7 +111,7 @@ def _verdict(symbol, timeframe, df, report) -> str:
                 oi_part += f" ({dctx['oi_change_24h_pct']:+.2f}٪ در ۲۴ ساعت)"
         deriv_line = (f"📈 مشتقه: فاندینگ {dctx['funding_rate_pct']:+.4f}٪ — "
                       f"{dctx['funding_bias_fa']}{oi_part}")
-        # لایه‌ی تفسیر (افزودنی): برچسب+یادداشت فاندینگ و ربع قیمت×بهره‌ی باز
+        # Interpretation layer (additive): funding label+note and the price×open-interest quadrant
         fi = dctx.get("funding_interpretation")
         if fi:
             deriv_line += f" | تفسیر فاندینگ: {fi['fa']} — {fi['note']}"
@@ -118,7 +119,7 @@ def _verdict(symbol, timeframe, df, report) -> str:
         if oi_i:
             deriv_line += f" | قیمت×بهره‌باز: {oi_i['fa']}"
         lines.append(deriv_line)
-    # گام ۶: حجم پوزیشن پیشنهادی (حساب placeholder — در متن مشخص است)
+    # Step 6: suggested position size (placeholder account — stated in the text)
     sz = c.get("sizing")
     if sz:
         lines.append(f"حجم پیشنهادی (ریسک {sz['risk_pct']:.0f}٪ از حساب نمونه "
@@ -130,8 +131,8 @@ def _verdict(symbol, timeframe, df, report) -> str:
     lines.append("⚠️ رتبه‌بندی مکانیکی است، نه تضمین سود.")
     return "\n".join(lines)
 
-# تلگرام فقط از api.telegram.org استفاده می‌کند؛ no_proxy این محیط ممکن است
-# مقادیر IPv6 براکت‌دار داشته باشد که httpx را خراب می‌کند — محدودش می‌کنیم.
+# Telegram only uses api.telegram.org; this environment's no_proxy may contain
+# bracketed IPv6 values that break httpx — we restrict it.
 os.environ["no_proxy"] = "localhost,127.0.0.1"
 os.environ["NO_PROXY"] = "localhost,127.0.0.1"
 from analysis.analyzer import build_report, fetch_candles_binance, fetch_market
@@ -140,11 +141,11 @@ import scanner
 from main import _fmt_price, print_report
 
 # ---------------------------------------------------------------------------
-# تنظیمات — توکن را اینجا نگه دار (پیشنهاد امنیتی: بعد از تست، ربات را در
-# BotFather با /revoke ریست کن و توکن تازه را فقط همینجا بگذار)
+# Settings — keep the token here (security suggestion: after testing, reset the bot in
+# BotFather with /revoke and put the new token only here)
 # ---------------------------------------------------------------------------
 BOT_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"  # get your own bot token from @BotFather "YOUR_BOT_TOKEN"
-ALLOWED_USER_IDS = []          # خالی = همه؛ برای قفل روی خودت آیدی عددی‌ات را بگذار
+ALLOWED_USER_IDS = []          # Empty = everyone; to lock it to yourself, put your numeric ID here
 TIMEFRAMES = ["1h", "4h", "1d", "1w"]
 
 logging.basicConfig(level=logging.INFO,
@@ -152,7 +153,7 @@ logging.basicConfig(level=logging.INFO,
 log = logging.getLogger("crypto_tg_bot")
 
 # ---------------------------------------------------------------------------
-# صفحه‌کلیدهای شیشه‌ای (اینلاین)
+# Glassmorphism (inline) keyboards
 # ---------------------------------------------------------------------------
 def kb_main():
     return InlineKeyboardMarkup([
@@ -164,9 +165,9 @@ def kb_main():
     ])
 
 
-# --- صفحه‌کلیدهای معاملات کاغذی (صرافی فرضی) ---
+# --- Paper-trading keyboards (hypothetical exchange) ---
 def kb_paper(chat_id):
-    """زیرمنوی کاغذی؛ بازکردن دستی ردیف اول است و حالت خودکار کنارش می‌نشیند."""
+    """Paper-trading submenu; manual opening is the first row and auto mode sits beside it."""
     try:
         auto_on = paper.get_account(chat_id)["auto"]["enabled"]
     except Exception:
@@ -184,7 +185,7 @@ def kb_paper(chat_id):
 
 
 def kb_paper_positions(chat_id):
-    """لیست پوزیشن‌ها با دکمه‌ی بستن برای هر پوزیشن (دستی و خودکار کنار هم)."""
+    """List of positions with a close button for each position (manual and automatic together)."""
     rows = []
     try:
         for p in paper.list_positions(chat_id):
@@ -271,7 +272,7 @@ def _allowed(update: Update) -> bool:
 
 
 def _render_report(symbol, timeframe, df, report) -> str:
-    """گزارش متنی موجود (print_report) را بدون تغییر منطق، به رشته تبدیل می‌کند."""
+    """Convert the existing text report (print_report) to a string without changing its logic."""
     buf = io.StringIO()
     with redirect_stdout(buf):
         print_report(report)
@@ -314,7 +315,7 @@ def _scan_detail_text(top) -> str:
 
 
 # ---------------------------------------------------------------------------
-# هندلرها
+# Handlers
 # ---------------------------------------------------------------------------
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not _allowed(update):
@@ -331,10 +332,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def _do_analysis(chat, symbol, timeframe, status_msg=None):
-    """تحلیل + ارسال گزارش متنی؛ (df, report) را برمی‌گرداند تا دکمه‌ی نمودار کار کند.
+    """Analysis + sending the text report; returns (df, report) so the chart button works.
 
-    افزودنی فارکس: نمادهای فارکس از مسیر بازار (Yahoo؛ پشتیبان Dukascopy) گرفته
-    می‌شوند؛ بقیه دقیقاً مثل قبل از بایننس.
+    Forex additive: forex symbols are fetched through the market route (Yahoo;
+    Dukascopy fallback); everything else comes from Binance exactly as before.
     """
     from data import forex_client
     fetch = (lambda s, t: fetch_market(s, t, market="forex")) \
@@ -359,12 +360,13 @@ async def _do_analysis(chat, symbol, timeframe, status_msg=None):
 
 
 async def _do_scan(chat, status_msg):
-    """اسکن زنده: شمارش ترکیبی از خود اسکنر خوانده می‌شود (fetch+سکور در یک قدم).
+    """Live scan: the combination count is read from the scanner itself (fetch+score in one step).
 
-    نکته: اسکنر داخلی روی خطای هر ترکیب، خطا را ثبت و ادامه می‌دهد، ولی اگر
-    خطا وسط fetch و قبل از score_candidate رخ دهد (مثلاً timeout بایننس)، آن
-    ترکیب به شمارش نمی‌رسد. پس پیشرفت را از get_scan_cache می‌خوانیم و در
-    پایان اختلاف را به‌صورت خطادارها گزارش می‌کنیم. اسکنر اصلی دست نخورده است.
+    Note: the internal scanner records an error for each combination and continues, but
+    if an error occurs in the middle of fetch and before score_candidate (for example,
+    a Binance timeout), that combination is not counted. So progress is read from
+    get_scan_cache, and at the end the difference is reported as the errored items.
+    The core scanner is untouched.
     """
     symbols, timeframes = config.SCAN_SYMBOLS, config.SCAN_TIMEFRAMES
     total = len(symbols) * len(timeframes)
@@ -433,7 +435,7 @@ async def _run_scan_flow(chat, status_msg):
 
 
 async def _run_forex_scan_flow(chat, status_msg):
-    """اسکن فارکس (افزودنی): آینه‌ی جریان اسکن کریپتو روی scan_forex_market."""
+    """Forex scan (additive): mirrors the crypto scan flow over scan_forex_market."""
     total = len(config.FOREX_SYMBOLS) * len(config.FOREX_TIMEFRAMES)
     try:
         result = await asyncio.to_thread(
@@ -485,14 +487,15 @@ context_cache = {}
 
 
 # ---------------------------------------------------------------------------
-# معاملات کاغذی — منطق در paper_trading.py است؛ اینجا فقط پوسته است.
-# دستی و خودکار در یک حساب‌اند و هر پوزیشن برچسب منشأ (source) دارد.
+# Paper trading — the logic is in paper_trading.py; this file is only the shell.
+# Manual and automatic positions share one account, and each position carries an origin (source) label.
 # ---------------------------------------------------------------------------
 def _paper_stop_target(symbol, direction):
     """
-    استاپ/هدف از تحلیل ربات (تایم‌فریم 4h): حد ضرر پیشنهادی همان جهت از
-    گزارش + اولین سطح مقابل (مقاومت برای لانگ، حمایت برای شورت) به‌عنوان
-    هدف — دقیقاً همان منطقی که در متن «پیشنهاد» استفاده می‌شود.
+    Stop/target from the bot's analysis (4h timeframe): the suggested stop loss for
+    the same direction from the report + the first opposing level (resistance for
+    long, support for short) as the target — exactly the same logic used in the
+    "suggestion" text.
     """
     df = fetch_candles_binance(symbol, "4h")
     report = build_report(df, symbol, "4h")
@@ -505,7 +508,7 @@ def _paper_stop_target(symbol, direction):
 
 
 async def _paper_finish_open(update_or_query, context, chat):
-    """قدم آخر جریان بازکردن دستی: اجرای بازکردن و اعلام نتیجه."""
+    """Final step of the manual-open flow: execute the opening and announce the result."""
     flow = context.user_data.get("paper_flow") or {}
     symbol, direction = flow.get("symbol"), flow.get("direction")
     amount, mode = flow.get("amount"), flow.get("mode")
@@ -541,7 +544,7 @@ async def on_paper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     chat = query.message.chat
     cid = chat.id
 
-    # در هر تعامل، اول موتور ارزیابی اجرا می‌شود (بسته‌شدن‌های حد/هدف دیده شوند)
+    # On every interaction, the evaluation engine runs first (so stop/target closures are seen)
     if data in ("p:menu", "p:summary", "p:positions", "p:history"):
         try:
             events = await asyncio.to_thread(paper.evaluate, cid)
@@ -637,7 +640,7 @@ async def on_paper_callback(update: Update, context: ContextTypes.DEFAULT_TYPE, 
 
 
 async def paper_job(context: ContextTypes.DEFAULT_TYPE):
-    """جاب دوره‌ای (۶۰ ثانیه): ارزیابی حد/هدف + تیک خودکار برای همه‌ی حساب‌ها."""
+    """Periodic job (60 seconds): stop/target evaluation + auto tick for all accounts."""
     try:
         chat_ids = await asyncio.to_thread(paper.all_chat_ids)
     except Exception:
@@ -653,7 +656,7 @@ async def paper_job(context: ContextTypes.DEFAULT_TYPE):
             if acct["auto"]["enabled"]:
                 actions = await asyncio.to_thread(paper.auto_tick, cid)
                 for act in actions:
-                    if "بسته شد" not in act:  # بسته‌شدن‌ها از evaluate بالا اعلام شدند
+                    if "بسته شد" not in act:  # Closures were already announced by the evaluate call above
                         await context.bot.send_message(chat_id=int(cid), text=act)
         except Exception:
             log.exception("paper job failed for chat %s", cid)
@@ -743,7 +746,7 @@ async def on_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     raw = (update.message.text or "").strip()
     if not raw:
         return
-    # جریان متنی معاملات کاغذی (نماد → مبلغ دلخواه → حد ضرر/هدف دستی)
+    # Paper-trading text flow (symbol → custom amount → manual stop loss/target)
     paper_await = context.user_data.get("paper_await")
     if paper_await:
         flow = context.user_data.setdefault("paper_flow", {})

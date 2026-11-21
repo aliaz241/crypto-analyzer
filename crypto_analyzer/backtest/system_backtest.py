@@ -1,51 +1,54 @@
 """
 backtest/system_backtest.py
-بک‌تست سیستمی: شبیه‌سازی walk-forward از «امتیازدهی اسکنر»
-(scanner.score_candidate) روی کندل‌های تاریخی — یعنی دقیقاً همان تصمیمی که
-ابزار امروز می‌گیرد، روی صدها نقطه‌ی گذشته بازاجرا و نتیجه‌اش سنجیده می‌شود.
+System backtest: a walk-forward simulation of the "scanner scoring"
+(scanner.score_candidate) on historical candles — i.e. exactly the decision
+the tool makes today, re-run on hundreds of past points and its result measured.
 
-قواعد ضد نشت آینده (lookahead):
-- در هر نقطه‌ی t فقط برش df[:t+1] به build_report داده می‌شود. build_report
-  همه‌ی اجزایش (از جمله بک‌تست داخلی الگوها که مبنای مؤلفه‌ی الگوست) را فقط
-  روی همان df ورودی حساب می‌کند و هیچ داده‌ی سراسری/شبکه‌ای نمی‌خواند
-  (در analyzer.py بررسی شد)؛ پس نرخ‌های الگو هم فقط گذشته‌ی t را می‌بینند.
-- ورود با قیمت بسته‌شدن کندل t است و شبیه‌سازی از کندل t+1 شروع می‌شود.
+Anti-lookahead rules:
+- At each point t, only the slice df[:t+1] is given to build_report. build_report
+  computes all its components (including the internal pattern backtest that is
+  the basis of the pattern component) only on that same input df and reads no
+  global/network data (verified in analyzer.py); so the pattern rates also only
+  see the past of t.
+- Entry is at the close price of candle t and the simulation starts from candle t+1.
 
-قواعد شبیه‌سازی معامله:
-- اگر امتیاز >= آستانه و حد ضرر و هدف هر دو موجود باشند، معامله باز می‌شود.
-- اگر در یک کندل هم حد ضرر و هم هدف لمس شوند، محافظه‌کارانه «حد ضرر» اول
-  حساب می‌شود (دقیقاً قاعده‌ی backtest/engine.py).
-- بعد از SYSBT_MAX_HOLD_CANDLES کندل بدون نتیجه، خروج با قیمت بسته‌شدن
-  همان کندل (timeout). معامله‌ای که پنجره‌ی کامل آینده‌اش در داده نیست،
-  اصلاً باز نمی‌شود تا آمار دچار سوگیری برش انتهایی نشود.
-- هزینه‌ها: کارمزد رفت‌وبرگشت + اسلیپیج دو طرف (ثابت‌های config)، از سود
-  کسر و نتیجه بر حسب واحد ریسک (R = |ورود − حد ضرر|) گزارش می‌شود.
+Trade simulation rules:
+- If score >= threshold and both stop loss and target exist, a trade is opened.
+- If in one candle both stop loss and target are touched, conservatively the
+  "stop loss" is counted first (exactly the rule of backtest/engine.py).
+- After SYSBT_MAX_HOLD_CANDLES candles with no result, exit at the close price
+  of that candle (timeout). A trade whose full future window is not in the
+  data is not opened at all, so the statistics do not suffer end-truncation bias.
+- Costs: round-trip fee + two-sided slippage (config constants), deducted from
+  profit, and the result is reported in risk units (R = |entry − stop loss|).
 
-تریلینگ‌استاپ (افزودنی، پیش‌فرض خاموش — پارامتر trailing در
-run_system_backtest؛ با None دقیقاً رفتار قبلی):
-- وقتی سود شناور معامله به activation_r واحد R برسد (قیمت مطلوب =
-  ورود ± activation_r×R)، تریلینگ فعال می‌شود و حد ضرر شناور روی فاصله‌ی
-  trail_r واحد R پشت بهترین قیمتِ دیده‌شده قفل می‌شود.
-- حد ضرر شناور فقط به نفع معامله حرکت می‌کند (رچت) و هیچ‌وقت از حد ضرر
-  اولیه بدتر نمی‌شود.
-- ضد نشت آینده: به‌روزرسانی تریلینگ از «کندل بعدی» اثر می‌گذارد — حد
-  ضرری که با سقف/کف کندل t جابه‌جا شده، روی خود کندل t اعمال نمی‌شود
-  (کندل t فقط با حد ضرری سنجیده می‌شود که از کندل‌های قبلش معلوم بوده).
-- لمس هم‌زمان حد ضرر (ثابت یا شناور) و هدف در یک کندل = حد ضرر اول
-  (همان قاعده‌ی محافظه‌کارانه‌ی موجود). خروج با حد ضرر شناور با نتیجه‌ی
-  'trailing' گزارش می‌شود.
-- ⚠️ انحراف از سمانتیک paper_trading.py: آنجا trailing_pct درصدی از
-  «قیمت» است و از لحظه‌ی ورود (بدون آستانه‌ی فعال‌سازی) روی بهترین قیمت
-  سوار می‌شود؛ اینجا پارامترها بر حسب R و با آستانه‌ی فعال‌سازی‌اند،
-  چون R واحد مشترک سنجش این موتور است و فعال‌سازی از ورود، حد ضرر را
-  از همان کندل اول تنگ‌تر از استاپ ساختاری می‌کرد. جزئیات و نتیجه‌ی
-  تست A/B در TRAILING_AB_FA.md.
+Trailing stop (additive, off by default — the trailing parameter in
+run_system_backtest; with None, exactly the previous behavior):
+- When the trade's floating profit reaches activation_r R units (favorable
+  price = entry ± activation_r×R), trailing activates and the floating stop
+  locks at a distance of trail_r R units behind the best price seen.
+- The floating stop only moves in the trade's favor (ratchet) and never gets
+  worse than the initial stop loss.
+- Anti-lookahead: the trailing update takes effect from the "next candle" — a
+  stop moved by the high/low of candle t is not applied to candle t itself
+  (candle t is only judged against a stop that was known from its previous
+  candles).
+- Simultaneous touch of the stop (fixed or floating) and the target in one
+  candle = stop first (the same existing conservative rule). Exit by the
+  floating stop is reported with the result 'trailing'.
+- ⚠️ Deviation from the semantics of paper_trading.py: there trailing_pct is a
+  percentage of the "price" and rides the best price from the moment of entry
+  (with no activation threshold); here the parameters are in R with an
+  activation threshold, because R is this engine's common unit of measurement
+  and activation from entry would have made the stop tighter than the
+  structural stop from the very first candle. Details and the A/B test result
+  are in TRAILING_AB_FA.md.
 
-خروجی برای هر آستانه به سه بخش all / in_sample (۶۰٪ اول) / out_sample
-(۴۰٪ آخر) تقسیم می‌شود؛ عدد قابل اتکا out_sample است.
+The output for each threshold is split into three parts: all / in_sample
+(first 60%) / out_sample (last 40%); the reliable number is out_sample.
 
-⚠️ هیچ فایل محاسباتی موجودی برای این ماژول تغییر نکرده؛ فقط از
-build_report و score_candidate موجود استفاده می‌شود.
+⚠️ No existing computational file has changed for this module; only the
+existing build_report and score_candidate are used.
 """
 
 import sys
@@ -58,22 +61,23 @@ from analysis import analyzer
 
 
 # ---------------------------------------------------------------------------
-# شبیه‌سازی یک معامله
+# Simulating one trade
 # ---------------------------------------------------------------------------
 def _simulate_trade(df, entry_pos: int, direction: str, entry: float,
                     stop: float, target: float, max_hold: int,
                     trailing: dict = None):
     """
-    از کندل بعد از ورود تا حداکثر max_hold کندل جلو می‌رود.
-    خروجی: (قیمت خروج, نتیجه) — نتیجه: 'target' | 'stop' | 'timeout'
-    و با تریلینگ فعال: 'trailing' هم ممکن است.
+    Moves forward from the candle after entry up to max_hold candles.
+    Output: (exit price, result) — result: 'target' | 'stop' | 'timeout'
+    and with trailing active, 'trailing' is also possible.
 
-    trailing (افزودنی، پیش‌فرض None = دقیقاً رفتار قبلی):
-    {"activation_r": A, "trail_r": D} بر حسب R = |ورود − حد ضرر اولیه|.
-    قواعد (محافظه‌کارانه و بدون نشت آینده) در docstring بالای ماژول آمده:
-    فعال‌سازی با رسیدن سود شناور به A×R؛ حد ضرر شناور D×R پشت بهترین
-    قیمت؛ فقط حرکت به نفع معامله؛ اثر از کندل بعدی؛ حد ضرر (هر نوع) در
-    لمس هم‌زمان با هدف برنده است.
+    trailing (additive, default None = exactly the previous behavior):
+    {"activation_r": A, "trail_r": D} in units of R = |entry − initial stop loss|.
+    The rules (conservative and lookahead-free) are in the module docstring
+    above: activation when floating profit reaches A×R; floating stop D×R
+    behind the best price; movement only in the trade's favor; effect from the
+    next candle; the stop (of either kind) wins on a simultaneous touch with
+    the target.
     """
     n = len(df)
     end_pos = min(entry_pos + max_hold, n - 1)
@@ -94,7 +98,7 @@ def _simulate_trade(df, entry_pos: int, direction: str, entry: float,
     for pos in range(entry_pos + 1, end_pos + 1):
         high = float(df["high"].iloc[pos])
         low = float(df["low"].iloc[pos])
-        # ۱) سنجش خروج با حد ضرر مؤثرِ معلوم از کندل‌های قبل (نه این کندل)
+        # 1) Checking the exit against the effective stop loss known from previous candles (not this candle)
         if direction == "long":
             hit_target = high >= target
             hit_stop = low <= eff_stop
@@ -102,13 +106,13 @@ def _simulate_trade(df, entry_pos: int, direction: str, entry: float,
             hit_target = low <= target
             hit_stop = high >= eff_stop
         if hit_target and hit_stop:
-            # ترتیب داخل کندل نامعلوم است — محافظه‌کارانه: اول حد ضرر
+            # The intra-candle order is unknown — conservative: stop loss first
             return eff_stop, ("trailing" if eff_stop != stop else "stop")
         if hit_target:
             return target, "target"
         if hit_stop:
             return eff_stop, ("trailing" if eff_stop != stop else "stop")
-        # ۲) به‌روزرسانی تریلینگ از روی همین کندل — اثرش از کندل بعدی است
+        # 2) Updating the trailing from this candle — its effect is from the next candle
         if use_trail:
             if direction == "long":
                 fav = high >= activation_price
@@ -126,7 +130,7 @@ def _simulate_trade(df, entry_pos: int, direction: str, entry: float,
 
 
 def _trade_r(direction: str, entry: float, exit_price: float, risk: float) -> float:
-    """بازده معامله بر حسب R بعد از کسر کارمزد و اسلیپیج."""
+    """Trade return in R after deducting fee and slippage."""
     gross = (exit_price - entry) if direction == "long" else (entry - exit_price)
     cost = entry * (config.SYSBT_FEE_PCT / 100.0
                     + 2.0 * config.SYSBT_SLIPPAGE_PCT / 100.0)
@@ -134,7 +138,7 @@ def _trade_r(direction: str, entry: float, exit_price: float, risk: float) -> fl
 
 
 def _metrics(trades: list) -> dict:
-    """معیارهای خلاصه از لیست معامله‌ها (به ترتیب زمانی)."""
+    """Summary metrics from the trade list (in time order)."""
     n = len(trades)
     if n == 0:
         return {"trades": 0, "win_rate_pct": None, "avg_r": None,
@@ -160,7 +164,7 @@ def _metrics(trades: list) -> dict:
         "trades": n,
         "win_rate_pct": round(wins / n * 100, 1),
         "avg_r": round(sum(rs) / n, 3),
-        "expectancy_r": round(sum(rs) / n, 3),   # امید ریاضی = میانگین R
+        "expectancy_r": round(sum(rs) / n, 3),   # Expected value = mean R
         "total_r": round(sum(rs), 2),
         "max_drawdown_r": round(max_dd, 2),
         "longest_losing_streak": longest,
@@ -169,7 +173,7 @@ def _metrics(trades: list) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# حساسیت پارامتر (افزودنی — ایده‌ی param_grid از پک خارجی؛ فقط داخل همین ماژول)
+# Parameter sensitivity (additive — the param_grid idea from an external pack; only inside this module)
 # ---------------------------------------------------------------------------
 _SCORE_MAXES = {
     "trend": config.SCORE_TREND_MAX,
@@ -182,9 +186,10 @@ _SCORE_MAXES = {
 
 def _variant_score(components: dict, weights: dict) -> float:
     """
-    امتیاز یک واریانت وزن: سهم هر مؤلفه متناسب با نسبت «سقف جدید/سقف پایه»
-    مقیاس می‌شود. کلیدهای غایب در weights یعنی سقف پایه. جهت/ورود/حد ضرر/
-    هدف به امتیاز کل وابسته نیستند، پس فقط «انتخاب معامله‌ها» عوض می‌شود.
+    Score of one weight variant: each component's share is scaled in proportion
+    to the ratio "new cap/base cap". Keys missing in weights mean the base cap.
+    Direction/entry/stop loss/target do not depend on the total score, so only
+    the "trade selection" changes.
     """
     total = 0.0
     for name, base_max in _SCORE_MAXES.items():
@@ -196,7 +201,7 @@ def _variant_score(components: dict, weights: dict) -> float:
 
 
 # ---------------------------------------------------------------------------
-# اجرای اصلی
+# Main run
 # ---------------------------------------------------------------------------
 def run_system_backtest(symbol: str = "BTC", timeframe: str = "4h",
                         thresholds=(55, 60, 65), step: int = None,
@@ -206,36 +211,38 @@ def run_system_backtest(symbol: str = "BTC", timeframe: str = "4h",
                         trailing: dict = None,
                         include_trailing_grid: bool = False) -> dict:
     """
-    بک‌تست سیستمی یک ارز/تایم‌فریم. اگر df داده نشود، از بایننس گرفته می‌شود.
-    خروجی: دیکشنری شامل متادیتا و برای هر آستانه: معیارهای all/in/out + لاگ معامله‌ها.
+    System backtest of one symbol/timeframe. If df is not given, it is fetched from Binance.
+    Output: a dict including metadata and, for each threshold: all/in/out metrics + the trade log.
 
-    param_grid (افزودنی، پیش‌فرض None = رفتار قبلی دقیقاً): لیستی از
-    دیکشنری‌های بازنویسی سقف مؤلفه‌ها، مثل {"pattern": 10.0} یا
-    {"trend": 35.0, "volume": 5.0}. برای هر واریانت، همان معامله‌های
-    شبیه‌سازی‌شده با امتیاز واریانت دوباره انتخاب و معیارهای in/out حساب
-    می‌شود و زیر کلید "param_grid" برمی‌گردد (همراه پرچم beats_base_out
-    برای هر آستانه). پیاده‌سازی کاملاً داخل همین ماژول است؛ scanner دست نخورده.
+    param_grid (additive, default None = exactly the previous behavior): a list of
+    dicts overriding component caps, e.g. {"pattern": 10.0} or
+    {"trend": 35.0, "volume": 5.0}. For each variant, the same simulated trades
+    are re-selected with the variant score and the in/out metrics are computed
+    and returned under the key "param_grid" (together with the beats_base_out
+    flag for each threshold). The implementation is entirely inside this module;
+    the scanner is untouched.
 
-    trailing (افزودنی، پیش‌فرض None = دقیقاً رفتار قبلی): دیکشنری
-    {"activation_r": A, "trail_r": D} که به شبیه‌سازی همه‌ی معامله‌های
-    همین اجرا داده می‌شود (قواعد در docstring ماژول). با trailing، رکورد
-    هر معامله علاوه بر فیلدهای قبلی کلید "exit_stop" و پرچم "trailed"
-    دارد و نتیجه در کلید "trailing" بالای خروجی ثبت می‌شود.
+    trailing (additive, default None = exactly the previous behavior): a dict
+    {"activation_r": A, "trail_r": D} passed to the simulation of all trades
+    of this run (rules in the module docstring). With trailing, each trade's
+    record, in addition to the previous fields, has the key "exit_stop" and the
+    flag "trailed", and the result is recorded in the "trailing" key at the top
+    of the output.
 
-    include_trailing_grid (افزودنی، پیش‌فرض False): اگر True باشد، علاوه
-    بر اجرای اصلی (بدون تریلینگ)، گرید کوچک config.SYSBT_TRAILING_GRID
-    هم روی همان ارزیابی‌ها اجرا و زیر کلید "trailing_grid" برگردانده
-    می‌شود (برای هر واریانت و هر آستانه: معیارهای in/out/all، بدون لاگ
-    معامله برای سبک‌ماندن خروجی). انتخاب واریانت در تست A/B فقط با
-    داخل‌نمونه انجام می‌شود — ابزار انتخاب در TRAILING_AB_FA.md است.
+    include_trailing_grid (additive, default False): if True, in addition to
+    the main run (without trailing), the small grid config.SYSBT_TRAILING_GRID
+    is also run on the same evaluations and returned under the key
+    "trailing_grid" (for each variant and each threshold: in/out/all metrics,
+    with no trade log, to keep the output light). Variant selection in the A/B
+    test is done with in-sample only — the selection tool is in TRAILING_AB_FA.md.
     """
     if step is None:
         step = config.SYSBT_STEP
     if max_hold is None:
-        # برنامه‌ی بهبود (افزودنی): اگر مرحله‌ی ۳ مقدار پذیرفته‌شده‌ای
-        # ثبت کرده باشد (IMPROVE_SYSBT_MAX_HOLD)، پیش‌فرض همان است؛
-        # وگرنه دقیقاً مقدار قبلی SYSBT_MAX_HOLD_CANDLES. پاس‌دادن صریح
-        # max_hold همیشه بر هر دو مقدم است.
+        # Improvement program (additive): if step 3 has recorded an accepted value
+        # (IMPROVE_SYSBT_MAX_HOLD), that is the default;
+        # otherwise exactly the previous value SYSBT_MAX_HOLD_CANDLES. Passing
+        # max_hold explicitly takes precedence over both.
         max_hold = (getattr(config, "IMPROVE_SYSBT_MAX_HOLD", None)
                     or config.SYSBT_MAX_HOLD_CANDLES)
     if min_history is None:
@@ -245,7 +252,7 @@ def run_system_backtest(symbol: str = "BTC", timeframe: str = "4h",
 
     n = len(df)
     split_pos = int(n * config.SYSBT_INSAMPLE_FRAC)
-    last_entry_pos = n - 1 - max_hold  # بعد از این نقطه پنجره‌ی کامل معامله در داده نیست
+    last_entry_pos = n - 1 - max_hold  # After this point the trade's full window is not in the data
 
     per_threshold = {th: [] for th in thresholds}
     variant_trades = [{th: [] for th in thresholds} for _ in (param_grid or [])]
@@ -273,7 +280,7 @@ def run_system_backtest(symbol: str = "BTC", timeframe: str = "4h",
         if risk <= 0:
             continue
         direction = cand["direction"]
-        # جهت باید با جای حد ضرر سازگار باشد، وگرنه معامله بی‌معناست
+        # The direction must be consistent with the stop loss position, otherwise the trade is meaningless
         if direction == "long" and not (stop < entry < target):
             continue
         if direction == "short" and not (target < entry < stop):
@@ -295,20 +302,20 @@ def run_system_backtest(symbol: str = "BTC", timeframe: str = "4h",
             "r": round(r_value, 3),
         }
         if trailing:
-            # فیلدهای افزودنی فقط وقتی تریلینگ فعال است (مسیر پیش‌فرض دست نخورده)
+            # Additive fields only when trailing is active (the default path untouched)
             record["exit_stop"] = exit_price if outcome in ("stop", "trailing") else None
             record["trailed"] = outcome == "trailing"
         for th in thresholds:
             if cand["score"] >= th:
                 per_threshold[th].append(record)
-        # واریانت‌های وزن: همان معامله، با امتیاز بازمقیاس‌شده انتخاب می‌شود
+        # Weight variants: the same trade is selected with a rescaled score
         for vi, weights in enumerate(param_grid or []):
             v_score = _variant_score(cand["components"], weights)
             v_record = dict(record, score=v_score)
             for th in thresholds:
                 if v_score >= th:
                     variant_trades[vi][th].append(v_record)
-        # گرید تریلینگ: همان ورودها، شبیه‌سازی دوباره با هر واریانت
+        # Trailing grid: the same entries, re-simulated with each variant
         for gi, tparams in enumerate(grid):
             g_exit, g_outcome = _simulate_trade(
                 df, pos, direction, entry, stop, target, max_hold, trailing=tparams)
@@ -375,7 +382,7 @@ def run_system_backtest(symbol: str = "BTC", timeframe: str = "4h",
 
 
 def format_summary_fa(result: dict) -> str:
-    """خلاصه‌ی متنی فارسی از نتیجه‌ی بک‌تست سیستمی."""
+    """Persian text summary of the system backtest result."""
     lines = [
         f"بک‌تست سیستمی {result['symbol']}/USDT — {result['timeframe']} "
         f"({result['candles']} کندل، {result['evaluations']} ارزیابی)",

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
 tests/run_offline_demo.py
-کل پایپ‌لاین (اندیکاتور + الگویابی + S/R + حد ضرر + بک‌تست) را روی داده‌ی
-مصنوعی اجرا می‌کند — بدون نیاز به اینترنت. برای تست سریع بعد از هر تغییر در کد
-یا برای دیدن ظاهر گزارش، همین را اجرا کن:
+Runs the whole pipeline (indicators + pattern detection + S/R + stop loss +
+backtest) on synthetic data — no internet needed. For a quick test after any
+code change, or to see what the report looks like, run this:
 
     python tests/run_offline_demo.py
 """
